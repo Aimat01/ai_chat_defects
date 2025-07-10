@@ -1,4 +1,5 @@
 import { MongoClient, ObjectId } from 'mongodb';
+import { getSimplifiedSchema } from 'mongodb-schema';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -73,105 +74,6 @@ class MongoDBService {
     }
   }
 
-  // Insert one document
-  async insertOne(collectionName, document) {
-    try {
-      const collection = this.db.collection(collectionName);
-      const result = await collection.insertOne(document);
-      return { 
-        acknowledged: result.acknowledged, 
-        insertedId: result.insertedId 
-      };
-    } catch (error) {
-      console.error(`Error inserting document into ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
-  // Insert many documents
-  async insertMany(collectionName, documents) {
-    try {
-      const collection = this.db.collection(collectionName);
-      const result = await collection.insertMany(documents);
-      return { 
-        acknowledged: result.acknowledged, 
-        insertedCount: result.insertedCount, 
-        insertedIds: result.insertedIds 
-      };
-    } catch (error) {
-      console.error(`Error inserting documents into ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
-  // Update one document
-  async updateOne(collectionName, filter, update, options = {}) {
-    try {
-      const collection = this.db.collection(collectionName);
-      filter = this.processObjectIds(filter);
-      const result = await collection.updateOne(filter, update, options);
-      return { 
-        acknowledged: result.acknowledged, 
-        matchedCount: result.matchedCount, 
-        modifiedCount: result.modifiedCount,
-        upsertedId: result.upsertedId
-      };
-    } catch (error) {
-      console.error(`Error updating document in ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
-  // Update many documents
-  async updateMany(collectionName, filter, update, options = {}) {
-    try {
-      const collection = this.db.collection(collectionName);
-      filter = this.processObjectIds(filter);
-      const result = await collection.updateMany(filter, update, options);
-      return { 
-        acknowledged: result.acknowledged, 
-        matchedCount: result.matchedCount, 
-        modifiedCount: result.modifiedCount,
-        upsertedId: result.upsertedId
-      };
-    } catch (error) {
-      console.error(`Error updating documents in ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
-  // Delete one document
-  async deleteOne(collectionName, filter) {
-    try {
-      const collection = this.db.collection(collectionName);
-      filter = this.processObjectIds(filter);
-      const result = await collection.deleteOne(filter);
-      return { 
-        acknowledged: result.acknowledged, 
-        deletedCount: result.deletedCount 
-      };
-    } catch (error) {
-      console.error(`Error deleting document from ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
-  // Delete many documents
-  async deleteMany(collectionName, filter) {
-    try {
-      const collection = this.db.collection(collectionName);
-      filter = this.processObjectIds(filter);
-      const result = await collection.deleteMany(filter);
-      return { 
-        acknowledged: result.acknowledged, 
-        deletedCount: result.deletedCount 
-      };
-    } catch (error) {
-      console.error(`Error deleting documents from ${collectionName}:`, error);
-      throw error;
-    }
-  }
-
   // Run aggregation pipeline
   async aggregate(collectionName, pipeline, options = {}) {
     try {
@@ -215,64 +117,313 @@ class MongoDBService {
     }
   }
 
-  // Create collection
-  async createCollection(collectionName, options = {}) {
+  // Get collection schema
+  async getCollectionSchema(collectionName, sampleSize = 5) {
     try {
-      await this.db.createCollection(collectionName, options);
-      return { success: true, message: `Collection ${collectionName} created` };
+      const collection = this.db.collection(collectionName);
+      // Get sample documents to analyze schema
+      const documents = await collection.find({}).limit(sampleSize).toArray();
+      
+      if (documents.length === 0) {
+        throw new Error(`Collection "${collectionName}" is empty or doesn't exist`);
+      }
+      
+      // Use mongodb-schema to analyze the documents
+      const schema = await getSimplifiedSchema(documents);
+      
+      return {
+        collectionName,
+        documentCount: documents.length,
+        sampleSize,
+        schema
+      };
     } catch (error) {
-      console.error(`Error creating collection ${collectionName}:`, error);
+      console.error(`Error getting schema for ${collectionName}:`, error);
       throw error;
     }
   }
 
-  // Drop collection
-  async dropCollection(collectionName) {
+  // Analyze relationships between collections
+  async analyzeCollectionRelationships(sampleSize = 5) {
     try {
-      const result = await this.db.collection(collectionName).drop();
-      return { success: result, message: `Collection ${collectionName} dropped` };
+      const collections = await this.listCollections();
+      const relationships = [];
+      const schemas = {};
+
+      // Get schemas for all collections
+      for (const collectionName of collections) {
+        try {
+          const schemaInfo = await this.getCollectionSchema(collectionName, sampleSize);
+          schemas[collectionName] = schemaInfo.schema;
+        } catch (error) {
+          console.warn(`Could not analyze schema for ${collectionName}: ${error.message}`);
+        }
+      }
+
+      // Analyze potential relationships
+      for (let i = 0; i < collections.length; i++) {
+        for (let j = i + 1; j < collections.length; j++) {
+          const collection1 = collections[i];
+          const collection2 = collections[j];
+          
+          const relationship = await this.findRelationshipBetweenCollections(
+            collection1, 
+            collection2, 
+            schemas[collection1], 
+            schemas[collection2],
+            sampleSize
+          );
+          
+          if (relationship) {
+            relationships.push(relationship);
+          }
+        }
+      }
+
+      return {
+        totalCollections: collections.length,
+        analyzedCollections: Object.keys(schemas).length,
+        relationships,
+        summary: this.generateRelationshipSummary(relationships)
+      };
     } catch (error) {
-      console.error(`Error dropping collection ${collectionName}:`, error);
+      console.error('Error analyzing collection relationships:', error);
       throw error;
     }
   }
 
-  // Create index
-  async createIndex(collectionName, indexSpec, options = {}) {
-    try {
-      const result = await this.db.collection(collectionName).createIndex(indexSpec, options);
-      return { indexName: result };
-    } catch (error) {
-      console.error(`Error creating index on ${collectionName}:`, error);
-      throw error;
+  // Find relationship between two specific collections
+  async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 50) {
+    if (!schema1 || !schema2) return null;
+
+    const relationships = [];
+    
+    // Look for potential foreign key relationships
+    const fields1 = Object.keys(schema1);
+    const fields2 = Object.keys(schema2);
+
+    // Check if collection1 has fields that might reference collection2
+    for (const field1 of fields1) {
+      // Common patterns for foreign keys
+      const possibleRefs = [
+        `${collection2.slice(0, -1)}Id`, // users -> userId
+        `${collection2.slice(0, -1)}_id`, // users -> user_id
+        `${collection2}Id`, // users -> usersId
+        `${collection2}_id`, // users -> users_id
+        field1.includes(collection2.slice(0, -1)), // any field containing collection name
+        field1.includes('_id') || field1.includes('Id') // any field ending with id
+      ];
+
+      if (possibleRefs.some(pattern => 
+        typeof pattern === 'string' ? field1.toLowerCase().includes(pattern.toLowerCase()) : pattern
+      )) {
+        // Verify the relationship by sampling data
+        const verified = await this.verifyRelationship(collection1, field1, collection2, '_id', sampleSize);
+        if (verified.isValid) {
+          relationships.push({
+            type: 'foreign_key',
+            from: collection1,
+            fromField: field1,
+            to: collection2,
+            toField: '_id',
+            strength: verified.strength,
+            sampleMatches: verified.matches
+          });
+        }
+      }
     }
+
+    // Check reverse relationship
+    for (const field2 of fields2) {
+      const possibleRefs = [
+        `${collection1.slice(0, -1)}Id`,
+        `${collection1.slice(0, -1)}_id`,
+        `${collection1}Id`,
+        `${collection1}_id`,
+        field2.includes(collection1.slice(0, -1)),
+        field2.includes('_id') || field2.includes('Id')
+      ];
+
+      if (possibleRefs.some(pattern => 
+        typeof pattern === 'string' ? field2.toLowerCase().includes(pattern.toLowerCase()) : pattern
+      )) {
+        const verified = await this.verifyRelationship(collection2, field2, collection1, '_id', sampleSize);
+        if (verified.isValid) {
+          relationships.push({
+            type: 'foreign_key',
+            from: collection2,
+            fromField: field2,
+            to: collection1,
+            toField: '_id',
+            strength: verified.strength,
+            sampleMatches: verified.matches
+          });
+        }
+      }
+    }
+
+    return relationships.length > 0 ? {
+      collection1,
+      collection2,
+      relationships
+    } : null;
+  }
+
+  // Verify if a relationship actually exists by checking sample data
+  async verifyRelationship(fromCollection, fromField, toCollection, toField, sampleSize = 5) {
+    try {
+      // Get sample documents from both collections
+      const fromDocs = await this.find(fromCollection, {}, { limit: sampleSize });
+      const toDocs = await this.find(toCollection, {}, { limit: sampleSize });
+
+      if (fromDocs.length === 0 || toDocs.length === 0) {
+        return { isValid: false, strength: 0, matches: 0 };
+      }
+
+      // Extract values to check
+      const fromValues = fromDocs
+        .map(doc => doc[fromField])
+        .filter(val => val != null)
+        .map(val => val.toString());
+
+      const toValues = new Set(
+        toDocs
+          .map(doc => doc[toField])
+          .filter(val => val != null)
+          .map(val => val.toString())
+      );
+
+      // Count matches
+      const matches = fromValues.filter(val => toValues.has(val)).length;
+      const strength = fromValues.length > 0 ? matches / fromValues.length : 0;
+
+      return {
+        isValid: strength > 0.1, // At least 10% match rate
+        strength: Math.round(strength * 100) / 100,
+        matches,
+        totalChecked: fromValues.length
+      };
+    } catch (error) {
+      console.error(`Error verifying relationship: ${error.message}`);
+      return { isValid: false, strength: 0, matches: 0 };
+    }
+  }
+
+  // Generate summary of relationships
+  generateRelationshipSummary(relationships) {
+    const summary = {
+      totalRelationships: relationships.length,
+      strongRelationships: 0,
+      weakRelationships: 0,
+      collectionGroups: []
+    };
+
+    const strongThreshold = 0.5;
+    const collectionConnections = {};
+
+    relationships.forEach(rel => {
+      rel.relationships.forEach(r => {
+        if (r.strength >= strongThreshold) {
+          summary.strongRelationships++;
+        } else {
+          summary.weakRelationships++;
+        }
+
+        // Track connections for grouping
+        if (!collectionConnections[r.from]) {
+          collectionConnections[r.from] = new Set();
+        }
+        if (!collectionConnections[r.to]) {
+          collectionConnections[r.to] = new Set();
+        }
+        
+        collectionConnections[r.from].add(r.to);
+        collectionConnections[r.to].add(r.from);
+      });
+    });
+
+    // Find connected groups
+    const visited = new Set();
+    Object.keys(collectionConnections).forEach(collection => {
+      if (!visited.has(collection)) {
+        const group = this.findConnectedGroup(collection, collectionConnections, visited);
+        if (group.length > 1) {
+          summary.collectionGroups.push(group);
+        }
+      }
+    });
+
+    return summary;
+  }
+
+  // Find connected group of collections
+  findConnectedGroup(startCollection, connections, visited) {
+    const group = [];
+    const queue = [startCollection];
+    
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (visited.has(current)) continue;
+      
+      visited.add(current);
+      group.push(current);
+      
+      if (connections[current]) {
+        connections[current].forEach(connected => {
+          if (!visited.has(connected)) {
+            queue.push(connected);
+          }
+        });
+      }
+    }
+    
+    return group;
   }
 
   // Helper method to convert string IDs to ObjectId
   processObjectIds(query) {
     const processed = { ...query };
     
-    // Process _id field if it exists as a string
-    if (processed._id && typeof processed._id === 'string') {
-      try {
-        processed._id = new ObjectId(processed._id);
-      } catch (e) {
-        // If it's not a valid ObjectId, leave it as is
-      }
-    }
+    // Helper function to check if string is a valid ObjectId
+    const isValidObjectId = (str) => {
+      return typeof str === 'string' && /^[0-9a-fA-F]{24}$/.test(str);
+    };
     
-    // Process _id in query operators
-    if (processed._id && typeof processed._id === 'object') {
-      Object.keys(processed._id).forEach(op => {
-        if (typeof processed._id[op] === 'string') {
-          try {
-            processed._id[op] = new ObjectId(processed._id[op]);
-          } catch (e) {
-            // If it's not a valid ObjectId, leave it as is
-          }
+    // Helper function to convert if valid ObjectId
+    const convertToObjectId = (value) => {
+      if (isValidObjectId(value)) {
+        try {
+          return new ObjectId(value);
+        } catch (e) {
+          return value; // If conversion fails, return original
         }
-      });
-    }
+      }
+      return value;
+    };
+    
+    // Process all fields in the query
+    Object.keys(processed).forEach(key => {
+      const value = processed[key];
+      
+      // Check if this field might contain ObjectId
+      if (key === '_id' || key.endsWith('_id') || key.endsWith('Id')) {
+        if (typeof value === 'string') {
+          processed[key] = convertToObjectId(value);
+        } else if (typeof value === 'object' && value !== null) {
+          // Handle query operators like $in, $eq, etc.
+          Object.keys(value).forEach(op => {
+            if (typeof value[op] === 'string') {
+              value[op] = convertToObjectId(value[op]);
+            } else if (Array.isArray(value[op])) {
+              // Handle arrays in operators like $in
+              value[op] = value[op].map(item => 
+                typeof item === 'string' ? convertToObjectId(item) : item
+              );
+            }
+          });
+        }
+      }
+    });
     
     return processed;
   }
