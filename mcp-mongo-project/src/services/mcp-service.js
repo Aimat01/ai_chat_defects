@@ -44,8 +44,10 @@ class MongoDBService {
     try {
       const collection = this.db.collection(collectionName);
       // Process query to handle ObjectId if needed
+      console.log("Query BEFORE processing:", JSON.stringify(query, null, 2));
       query = this.processObjectIds(query);
-      
+      console.log("Query AFTER processing:", JSON.stringify(query, null, 2));
+
       const { limit = 0, skip = 0, sort = {}, projection = {} } = options;
       const result = await collection.find(query)
         .sort(sort)
@@ -144,56 +146,81 @@ class MongoDBService {
   }
 
   // Analyze relationships between collections
-  async analyzeCollectionRelationships(sampleSize = 5) {
+  async analyzeCollectionRelationships(sampleSize = 3, maxCollections = 10) {
     try {
-      const collections = await this.listCollections();
-      const relationships = [];
-      const schemas = {};
+      const allCollections = await this.listCollections();
+    
+    // Limit collections to prevent timeout
+    const collections = allCollections.slice(0, maxCollections);
+    const relationships = [];
+    const schemas = {};
 
-      // Get schemas for all collections
-      for (const collectionName of collections) {
-        try {
-          const schemaInfo = await this.getCollectionSchema(collectionName, sampleSize);
-          schemas[collectionName] = schemaInfo.schema;
-        } catch (error) {
-          console.warn(`Could not analyze schema for ${collectionName}: ${error.message}`);
-        }
+    console.log(`Analyzing relationships for ${collections.length} collections with sample size ${sampleSize}`);
+
+    // Get schemas for all collections with timeout for each
+    for (const collectionName of collections) {
+      try {
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Schema analysis timeout for ${collectionName}`)), 5000);
+        });
+        
+        const schemaPromise = this.getCollectionSchema(collectionName, sampleSize);
+        const schemaInfo = await Promise.race([schemaPromise, timeoutPromise]);
+        schemas[collectionName] = schemaInfo.schema;
+      } catch (error) {
+        console.warn(`Could not analyze schema for ${collectionName}: ${error.message}`);
+        // Continue with other collections
       }
+    }
 
-      // Analyze potential relationships
-      for (let i = 0; i < collections.length; i++) {
-        for (let j = i + 1; j < collections.length; j++) {
-          const collection1 = collections[i];
-          const collection2 = collections[j];
-          
-          const relationship = await this.findRelationshipBetweenCollections(
-            collection1, 
-            collection2, 
-            schemas[collection1], 
-            schemas[collection2],
-            sampleSize
-          );
-          
-          if (relationship) {
-            relationships.push(relationship);
+    // Analyze potential relationships (limit combinations)
+    const maxCombinations = 20; // Limit to prevent too many comparisons
+    let combinationCount = 0;
+    
+    for (let i = 0; i < collections.length && combinationCount < maxCombinations; i++) {
+      for (let j = i + 1; j < collections.length && combinationCount < maxCombinations; j++) {
+        const collection1 = collections[i];
+        const collection2 = collections[j];
+        
+        if (schemas[collection1] && schemas[collection2]) {
+          try {
+            const relationship = await this.findRelationshipBetweenCollections(
+              collection1, 
+              collection2, 
+              schemas[collection1], 
+              schemas[collection2],
+              Math.min(sampleSize, 3) // Further limit sample size for relationship verification
+            );
+            
+            if (relationship) {
+              relationships.push(relationship);
+            }
+          } catch (error) {
+            console.warn(`Error analyzing relationship between ${collection1} and ${collection2}: ${error.message}`);
           }
         }
+        
+        combinationCount++;
       }
-
-      return {
-        totalCollections: collections.length,
-        analyzedCollections: Object.keys(schemas).length,
-        relationships,
-        summary: this.generateRelationshipSummary(relationships)
-      };
-    } catch (error) {
-      console.error('Error analyzing collection relationships:', error);
-      throw error;
     }
+
+    return {
+      totalCollections: allCollections.length,
+      analyzedCollections: Object.keys(schemas).length,
+      relationships,
+      summary: this.generateRelationshipSummary(relationships),
+      note: collections.length < allCollections.length ? 
+        `Analysis limited to first ${collections.length} collections to prevent timeout` : 
+        'All collections analyzed'
+    };
+  } catch (error) {
+    console.error('Error analyzing collection relationships:', error);
+    throw error;
   }
+}
 
   // Find relationship between two specific collections
-  async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 50) {
+  async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 5) {
     if (!schema1 || !schema2) return null;
 
     const relationships = [];
@@ -386,17 +413,45 @@ class MongoDBService {
     
     // Helper function to check if string is a valid ObjectId
     const isValidObjectId = (str) => {
-      return typeof str === 'string' && /^[0-9a-fA-F]{24}$/.test(str);
+      if (typeof str !== 'string') return false;
+      if (str.length !== 24) return false;
+      return /^[0-9a-fA-F]{24}$/.test(str);
     };
     
     // Helper function to convert if valid ObjectId
     const convertToObjectId = (value) => {
+      // Если уже ObjectId, возвращаем как есть
+      if (value instanceof ObjectId) {
+        return value;
+      }
+
+      // Проверяем, является ли строка валидным ObjectId
       if (isValidObjectId(value)) {
         try {
           return new ObjectId(value);
         } catch (e) {
-          return value; // If conversion fails, return original
+          console.log(`Failed to convert ${value} to ObjectId:`, e.message);
+          return value;
         }
+      }
+
+      return value;
+    };
+    
+    // Recursive function to process nested objects
+    const processValue = (value) => {
+      if (typeof value === 'string') {
+        return convertToObjectId(value);
+      } else if (Array.isArray(value)) {
+        return value.map(item => 
+          typeof item === 'string' ? convertToObjectId(item) : processValue(item)
+        );
+      } else if (typeof value === 'object' && value !== null) {
+        const processedObj = {};
+        Object.keys(value).forEach(subKey => {
+          processedObj[subKey] = processValue(value[subKey]);
+        });
+        return processedObj;
       }
       return value;
     };
@@ -407,20 +462,14 @@ class MongoDBService {
       
       // Check if this field might contain ObjectId
       if (key === '_id' || key.endsWith('_id') || key.endsWith('Id')) {
-        if (typeof value === 'string') {
-          processed[key] = convertToObjectId(value);
-        } else if (typeof value === 'object' && value !== null) {
-          // Handle query operators like $in, $eq, etc.
-          Object.keys(value).forEach(op => {
-            if (typeof value[op] === 'string') {
-              value[op] = convertToObjectId(value[op]);
-            } else if (Array.isArray(value[op])) {
-              // Handle arrays in operators like $in
-              value[op] = value[op].map(item => 
-                typeof item === 'string' ? convertToObjectId(item) : item
-              );
-            }
-          });
+        processed[key] = processValue(value);
+      } else if (typeof value === 'object' && value !== null) {
+        // Handle query operators like $and, $or, $match, etc.
+        if (key.startsWith('$')) {
+          processed[key] = processValue(value);
+        } else {
+          // For nested objects, process recursively
+          processed[key] = processValue(value);
         }
       }
     });

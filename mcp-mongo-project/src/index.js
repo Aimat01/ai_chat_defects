@@ -24,7 +24,7 @@ const mongoService = new MongoDBService();
 
 const app = express();
 
-// MongoDB Find Documents Tool - обновленный
+// MongoDB Find Documents Tool
 server.tool(
     "findDocuments",
     "Find and retrieve documents from a MongoDB collection. Use this when you need to see actual document content or search with specific criteria. For counting with filters, use this tool instead of countDocuments.",
@@ -64,7 +64,7 @@ server.tool(
     }
 );
 
-// MongoDB Find One Document Tool - обновленный
+// MongoDB Find One Document Tool
 server.tool(
     "findOneDocument",
     "Find a single document in a MongoDB collection. Use this when you need exactly one document by ID or specific criteria.",
@@ -103,7 +103,6 @@ server.tool(
     }
 );
 
-// MongoDB Aggregation Tool - УЛУЧШЕННАЯ ВЕРСИЯ
 server.tool(
     "aggregateDocuments",
     "Run aggregation pipeline on a MongoDB collection. Use this for complex queries like grouping, counting by field, finding max/min values, etc.",
@@ -116,13 +115,11 @@ server.tool(
             const { collection, pipeline } = arg;
             const results = await mongoService.aggregate(collection, pipeline);
             
-            // Создаем более информативный ответ
             let responseText = `Aggregation on collection '${collection}' returned ${results.length} results`;
             
             if (results.length > 0) {
                 responseText += `:\n${JSON.stringify(results, null, 2)}`;
                 
-                // Если это группировка с подсчетом, добавим краткую сводку
                 if (results[0].count !== undefined || results[0]._id !== undefined) {
                     responseText += `\n\nSummary:`;
                     results.slice(0, 5).forEach((result, index) => {
@@ -160,7 +157,6 @@ server.tool(
     }
 );
 
-// MongoDB Count Documents Tool - ИСПРАВЛЕННАЯ ВЕРСИЯ
 server.tool(
     "countDocuments",
     "Count documents in a MongoDB collection. IMPORTANT: Always use the 'query' parameter to filter documents when counting specific subsets. For example, to count defects for a specific equipment, use query: {'equipment_id': 'equipment_id_value'}",
@@ -173,7 +169,6 @@ server.tool(
             const { collection, query } = arg;
             const count = await mongoService.countDocuments(collection, query);
             
-            // Возвращаем только один content item с полным результатом
             return {
                 content: [
                     {
@@ -230,20 +225,40 @@ server.tool(
 );
 
 // MongoDB Collection Schema Tool
+
+// MongoDB Collection Schema Tool
 server.tool(
     "getCollectionSchema",
     "Analyze the structure and field types of a MongoDB collection to understand what fields are available for querying",
     {
         collection: z.string().describe("The collection name to analyze"),
-        sampleSize: z.number().optional().default(100).describe("Number of documents to sample for schema analysis")
+        sampleSize: z.number().optional().default(5).describe("Number of documents to sample for schema analysis")
     },
     async (arg) => {
         try {
             const { collection, sampleSize } = arg;
+
+            // Check if collection exists first
+            const collections = await mongoService.listCollections();
+            if (!collections.includes(collection)) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Collection '${collection}' does not exist in the database.`
+                        },
+                        {
+                            type: "text",
+                            text: `Available collections: ${JSON.stringify(collections, null, 2)}`
+                        }
+                    ]
+                };
+            }
+
             const schemaInfo = await mongoService.getCollectionSchema(collection, sampleSize);
-            
+
             const fieldsCount = Object.keys(schemaInfo.schema).length;
-            
+
             return {
                 content: [
                     {
@@ -251,7 +266,7 @@ server.tool(
                         text: `Schema analysis for collection '${collection}' (sampled ${schemaInfo.documentCount} documents)`
                     },
                     {
-                        type: "text", 
+                        type: "text",
                         text: `Found ${fieldsCount} fields in the schema`
                     },
                     {
@@ -274,45 +289,103 @@ server.tool(
 );
 
 // NEW: Helper tool to guide AI about relationships
+// NEW: Helper tool to guide AI about relationships
 server.tool(
     "getDatabaseInfo",
-    "Get helpful information about common database relationships and query patterns. Use this to understand how to query related data.",
-    {},
-    async () => {
-        const info = {
-            "common_relationships": {
-                "defects_to_equipments": "defects collection has 'equipment_id' field that references equipments._id",
-                "equipments_to_brands": "equipments collection has 'brand_id' field that references brands._id", 
-                "equipments_to_workspaces": "equipments collection has 'workspace_id' field that references workspaces._id"
-            },
-            "query_examples": {
-                "count_defects_by_equipment": "countDocuments('defects', {'equipment_id': 'equipment_id_value'})",
-                "find_equipment_by_brand": "findDocuments('equipments', {'brand_id': 'brand_id_value'})",
-                "get_equipment_details": "findOneDocument('equipments', {'_id': 'equipment_id'})"
-            },
-            "tips": [
-                "Always use query filters when looking for specific relationships",
-                "Use findDocuments when you need actual data, countDocuments when you just need counts",
-                "Check collection schemas first if you're unsure about field names"
-            ]
-        };
+    "Get helpful information about database relationships and query patterns. Use this to understand how to query related data.",
+    {
+        analyzeRelationships: z.boolean().optional().default(false).describe("Whether to analyze actual relationships between collections (may take time for large databases)"),
+        sampleSize: z.number().optional().default(3).describe("Number of documents to sample for relationship analysis (smaller = faster)")
+    },
+    async (arg) => {
+        try {
+            const { analyzeRelationships, sampleSize } = arg;
 
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "Database relationship information and query guidance:"
+            // Get actual collections first
+            const collections = await mongoService.listCollections();
+
+            // Get dynamic relationship information based on actual collections
+            const staticInfo = {
+                "available_collections": collections,
+                "general_patterns": {
+                    "foreign_keys": "Look for fields ending with '_id' or 'Id' - these often reference other collections",
+                    "timestamps": "Fields like 'created_at', 'updated_at' contain date/time information",
+                    "references": "Use getCollectionSchema to understand field structures and potential relationships"
                 },
-                {
-                    type: "text",
-                    text: JSON.stringify(info, null, 2)
+                "query_examples": {
+                    "count_with_filter": "countDocuments('collection', {'field': 'value'})",
+                    "find_with_filter": "findDocuments('collection', {'field': 'value'})",
+                    "get_specific_document": "findOneDocument('collection', {'_id': 'document_id'})"
+                },
+                "tips": [
+                    "Always use query filters when looking for specific relationships",
+                    "Use findDocuments when you need actual data, countDocuments when you just need counts",
+                    "Check collection schemas first if you're unsure about field names",
+                    "Use listCollections to see what collections are available",
+                    "Look for fields ending with '_id' to find potential relationships"
+                ]
+            };
+
+            const response = {
+                content: [
+                    {
+                        type: "text",
+                        text: "Database information and query guidance:"
+                    },
+                    {
+                        type: "text",
+                        text: JSON.stringify(staticInfo, null, 2)
+                    }
+                ]
+            };
+
+            // Only analyze relationships if explicitly requested
+            if (analyzeRelationships) {
+                try {
+                    // Add timeout for relationship analysis
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Relationship analysis timed out')), 30000); // 30 seconds timeout
+                    });
+
+                    const analysisPromise = mongoService.analyzeCollectionRelationships(sampleSize);
+                    const relationshipAnalysis = await Promise.race([analysisPromise, timeoutPromise]);
+
+                    response.content.push({
+                        type: "text",
+                        text: "\nAnalyzed relationship patterns in the database:"
+                    });
+                    response.content.push({
+                        type: "text",
+                        text: JSON.stringify(relationshipAnalysis, null, 2)
+                    });
+                } catch (analysisError) {
+                    response.content.push({
+                        type: "text",
+                        text: `\nNote: Could not analyze relationships dynamically: ${analysisError.message}`
+                    });
                 }
-            ]
-        };
+            } else {
+                response.content.push({
+                    type: "text",
+                    text: "\nNote: Use 'analyzeRelationships: true' parameter to get dynamic relationship analysis."
+                });
+            }
+
+            return response;
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error getting database info: ${error.message}`
+                    }
+                ]
+            };
+        }
     }
 );
 
-// NEW: Sample Data Tool для отладки
+// NEW: Sample Data Tool
 server.tool(
     "getSampleData",
     "Get sample documents from a collection to understand data structure and field types. Useful for debugging query issues.",
@@ -349,6 +422,72 @@ server.tool(
                     {
                         type: "text",
                         text: `Error getting sample data: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
+// NEW: Analyze Collection Relationships Tool
+server.tool(
+    "analyzeCollectionRelationships",
+    "Analyze relationships between collections in the database. This may take time for large databases.",
+    {
+        sampleSize: z.number().optional().default(3).describe("Number of documents to sample for relationship analysis (smaller = faster)"),
+        maxCollections: z.number().optional().default(10).describe("Maximum number of collections to analyze (to prevent timeouts)")
+    },
+    async (arg) => {
+        try {
+            const { sampleSize, maxCollections } = arg;
+            
+            // Get list of collections first
+            const allCollections = await mongoService.listCollections();
+            
+            if (allCollections.length === 0) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "No collections found in the database."
+                        }
+                    ]
+                };
+            }
+            
+            // Limit collections to analyze
+            const collectionsToAnalyze = allCollections.slice(0, maxCollections);
+            
+            if (collectionsToAnalyze.length < allCollections.length) {
+                console.log(`Analyzing first ${collectionsToAnalyze.length} of ${allCollections.length} collections to prevent timeout`);
+            }
+            
+            // Add timeout for the entire analysis
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Analysis timed out after 45 seconds')), 45000);
+            });
+
+            const analysisPromise = mongoService.analyzeCollectionRelationships(sampleSize);
+            const relationshipAnalysis = await Promise.race([analysisPromise, timeoutPromise]);
+            
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Relationship analysis completed for ${collectionsToAnalyze.length} collections:`
+                    },
+                    {
+                        type: "text",
+                        text: JSON.stringify(relationshipAnalysis, null, 2)
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error analyzing relationships: ${error.message}`
                     }
                 ]
             };
