@@ -120,6 +120,7 @@ class MongoDBService {
   }
 
   // Get collection schema
+  // TODO: make it recursive for object fields
   async getCollectionSchema(collectionName, sampleSize = 5) {
     try {
       const collection = this.db.collection(collectionName);
