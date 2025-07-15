@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {z} from "zod";
 import MongoDBService from "./services/mongo-mcp-service.js";
-import {PostgresMcpService} from "./services/postgres-mcp-service";
+import { PostgresMcpService } from './services/postgres-mcp-service.js';
 
 const server = new McpServer({
     name: "example-server",
@@ -653,6 +653,90 @@ server.tool(
                     {
                         type: "text",
                         text: `Error getting schema info: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
+// Обновленный инструмент для получения образцов данных
+server.tool(
+    "pg_get_sample_data",
+    "Get sample rows from a PostgreSQL table to understand data structure",
+    {
+        connectionString: z.string().optional(),
+        tableName: z.string().describe("Table name to sample"),
+        limit: z.number().optional().default(3).describe("Number of sample rows to return"),
+        columns: z.array(z.string()).optional().describe("Specific columns to show (leave empty for all columns)")
+    },
+    async (args) => {
+        try {
+            const { connectionString, tableName, limit, columns } = args;
+
+            if (connectionString) {
+                await postgresService.connect(connectionString);
+            }
+
+            const samples = await postgresService.getSampleData(tableName, limit, columns);
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Sample ${samples.length} rows from table '${tableName}':\n${JSON.stringify(samples, null, 2)}`
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error getting sample data: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
+// Обновленный инструмент для анализа связей
+server.tool(
+    "pg_analyze_relationships",
+    "Analyze relationships between PostgreSQL tables based on foreign keys",
+    {
+        connectionString: z.string().optional(),
+        includeImplicitRelations: z.boolean().optional().default(false).describe("Also look for implicit relationships based on column naming patterns")
+    },
+    async (args) => {
+        try {
+            const { connectionString, includeImplicitRelations } = args;
+
+            if (connectionString) {
+                await postgresService.connect(connectionString);
+            }
+
+            const relationships = await postgresService.analyzeRelationships(includeImplicitRelations);
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: "PostgreSQL table relationships analysis:"
+                    },
+                    {
+                        type: "text",
+                        text: JSON.stringify(relationships, null, 2)
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error analyzing relationships: ${error.message}`
                     }
                 ]
             };
