@@ -2,7 +2,8 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {z} from "zod";
-import MongoDBService from "./services/mcp-service.js";
+import MongoDBService from "./services/mongo-mcp-service.js";
+import {PostgresMcpService} from "./services/postgres-mcp-service";
 
 const server = new McpServer({
     name: "example-server",
@@ -11,6 +12,7 @@ const server = new McpServer({
 
 // Initialize MongoDB service
 const mongoService = new MongoDBService();
+const postgresService = new PostgresMcpService();
 
 // Connect to MongoDB when starting the server
 (async () => {
@@ -21,6 +23,18 @@ const mongoService = new MongoDBService();
         process.exit(1);
     }
 })();
+
+// Connect to PostgreSQL when starting the server
+(async () => {
+    try {
+        await postgresService.connect();
+        console.log("PostgreSQL MCP server connected successfully");
+    } catch (error) {
+        console.error("Failed to connect to PostgreSQL:", error);
+        process.exit(1);
+    }
+})();
+
 
 const app = express();
 
@@ -288,8 +302,7 @@ server.tool(
     }
 );
 
-// NEW: Helper tool to guide AI about relationships
-// NEW: Helper tool to guide AI about relationships
+// Helper tool to guide AI about relationships
 server.tool(
     "getDatabaseInfo",
     "Get helpful information about database relationships and query patterns. Use this to understand how to query related data.",
@@ -385,7 +398,7 @@ server.tool(
     }
 );
 
-// NEW: Sample Data Tool
+// Sample Data Tool
 server.tool(
     "getSampleData",
     "Get sample documents from a collection to understand data structure and field types. Useful for debugging query issues.",
@@ -429,7 +442,7 @@ server.tool(
     }
 );
 
-// NEW: Analyze Collection Relationships Tool
+// Analyze Collection Relationships Tool
 server.tool(
     "analyzeCollectionRelationships",
     "Analyze relationships between collections in the database. This may take time for large databases.",
@@ -495,6 +508,158 @@ server.tool(
     }
 );
 
+
+// POSTGRES MCP TOOLS
+// Execute Query Tool (SELECT operations)
+server.tool(
+    "pg_execute_query",
+    "Execute SELECT queries and data retrieval operations. Use this for SELECT, WITH clauses, and other read operations.",
+    {
+        connectionString: z.string().optional().describe('PostgreSQL connection string (optional)'),
+        operation: z.enum(['select', 'count', 'exists']).describe('Query operation: select (fetch rows), count (count rows), exists (check existence)'),
+        query: z.string().describe('SQL SELECT query to execute'),
+        parameters: z.array(z.unknown()).optional().default([]).describe('Parameter values for prepared statement placeholders ($1, $2, etc.)'),
+        limit: z.number().optional().describe('Maximum number of rows to return (safety limit)'),
+        timeout: z.number().optional().describe('Query timeout in milliseconds')
+    },
+    async (args) => {
+        try {
+            const { connectionString, operation, query, parameters = [], limit, timeout } = args;
+
+            if (connectionString) {
+                await postgresService.connect(connectionString);
+            }
+
+            // Validate query is a SELECT-like operation
+            const trimmedQuery = query.trim().toLowerCase();
+            if (!trimmedQuery.startsWith('select') && !trimmedQuery.startsWith('with')) {
+                throw new McpError(ErrorCode.InvalidParams, 'Query must be a SELECT statement or CTE (WITH clause)');
+            }
+
+            let finalQuery = query;
+
+            // Apply limit if specified and not already in query
+            if (limit && !trimmedQuery.includes('limit')) {
+                finalQuery += ` LIMIT ${limit}`;
+            }
+
+            let result;
+            switch (operation) {
+                case 'select': {
+                    const rows = await postgresService.executeQuery(finalQuery, parameters);
+                    result = {
+                        operation: 'select',
+                        rowCount: rows.length,
+                        rows: rows
+                    };
+                    break;
+                }
+
+                case 'count': {
+                    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as subquery`;
+                    const countResult = await postgresService.executeQuery(countQuery, parameters);
+                    result = {
+                        operation: 'count',
+                        rowCount: 1,
+                        result: countResult[0]?.total || 0
+                    };
+                    break;
+                }
+
+                case 'exists': {
+                    const existsQuery = `SELECT EXISTS (${query}) as exists`;
+                    const existsResult = await postgresService.executeQuery(existsQuery, parameters);
+                    result = {
+                        operation: 'exists',
+                        rowCount: 1,
+                        result: existsResult[0]?.exists || false
+                    };
+                    break;
+                }
+            }
+
+            let responseText = '';
+            switch (operation) {
+                case 'select':
+                    responseText = `Query executed successfully. Retrieved ${result.rowCount} rows.\n\nResults:\n${JSON.stringify(result.rows, null, 2)}`;
+                    break;
+                case 'count':
+                    responseText = `Count query executed successfully. Total rows: ${result.result}`;
+                    break;
+                case 'exists':
+                    responseText = `Exists query executed successfully. Result: ${result.result ? 'EXISTS' : 'NOT EXISTS'}`;
+                    break;
+            }
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: responseText
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error executing ${args.operation} query: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
+
+// Get Schema Info Tool
+server.tool(
+    "pg_get_schema_info",
+    "Get schema information for a database or specific table. Use this to understand table structure.",
+    {
+        connectionString: z.string().optional().describe('PostgreSQL connection string (optional)'),
+        tableName: z.string().optional().describe("Optional table name to get detailed schema for")
+    },
+    async (args) => {
+        try {
+            const { connectionString, tableName } = args;
+
+            if (connectionString) {
+                await postgresService.connect(connectionString);
+            }
+
+            const result = await postgresService.getSchemaInfo(tableName);
+
+            const message = tableName
+                ? `Schema information for table ${tableName}`
+                : 'List of tables in database';
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: message
+                    },
+                    {
+                        type: "text",
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Error getting schema info: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
 const transports = {};
 
 app.get("/sse", async (req, res) => {
@@ -520,11 +685,13 @@ app.post("/messages", async (req, res) => {
 process.on('SIGINT', async () => {
     try {
         await mongoService.disconnect();
+        await postgresService.disconnect();
         process.exit(0);
     } catch (error) {
         console.error('Error during shutdown:', error);
         process.exit(1);
     }
+
 });
 
 app.listen(3001, () => {

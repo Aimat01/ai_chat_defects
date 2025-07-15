@@ -16,7 +16,7 @@ This project demonstrates the integration of MongoDB with the Model Context Prot
     ├── src/
     │   ├── index.js        # Server setup and tool definitions
     │   └── services/
-    │       └── mcp-service.js  # MongoDB service implementation
+    │       └── mongo-mcp-service.js  # MongoDB service implementation
     └── package.json        # Server dependencies
 ```
 
