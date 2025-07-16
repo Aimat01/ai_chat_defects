@@ -133,7 +133,7 @@ mcpClient.connect(new SSEClientTransport(new URL("http://localhost:3001/sse"))).
     process.exit(1);
 });
 
-// Function to send message to Gemini API and get response
+// Function to send a message to Gemini API and get a response
 async function askGemini() {
     try {
         const response = await ai.models.generateContent({
@@ -208,7 +208,7 @@ async function startChat() {
     while (true) {
         const userInput = readlineSync.question('\nYou: ');
 
-        // Add user input to chat history
+        // Add user input to the chat history
         chatHistory.push({ role: 'user', parts: [{ text: userInput }] });
 
         // Check if user wants to exit
@@ -235,14 +235,14 @@ async function startChat() {
             }
             
             if (aiResponse.type === 'text') {
-                // AI provided final text response
+                // AI provided the final text response
                 finalResponse = aiResponse.text;
                 chatHistory.push({ role: 'model', parts: [{ text: aiResponse.text }] });
                 break;
             }
             
             if (aiResponse.type === 'tool_call') {
-                // Add tool call and result to chat history
+                // Add tool call and result to the chat history
                 chatHistory.push({
                     role: 'model',
                     parts: [{ 

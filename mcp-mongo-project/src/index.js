@@ -239,8 +239,6 @@ server.tool(
 );
 
 // MongoDB Collection Schema Tool
-
-// MongoDB Collection Schema Tool
 server.tool(
     "getCollectionSchema",
     "Analyze the structure and field types of a MongoDB collection to understand what fields are available for querying",
@@ -252,7 +250,7 @@ server.tool(
         try {
             const { collection, sampleSize } = arg;
 
-            // Check if collection exists first
+            // Check if a collection exists first
             const collections = await mongoService.listCollections();
             if (!collections.includes(collection)) {
                 return {
@@ -660,7 +658,6 @@ server.tool(
     }
 );
 
-// Обновленный инструмент для получения образцов данных
 server.tool(
     "pg_get_sample_data",
     "Get sample rows from a PostgreSQL table to understand data structure",
@@ -701,7 +698,6 @@ server.tool(
     }
 );
 
-// Обновленный инструмент для анализа связей
 server.tool(
     "pg_analyze_relationships",
     "Analyze relationships between PostgreSQL tables based on foreign keys",

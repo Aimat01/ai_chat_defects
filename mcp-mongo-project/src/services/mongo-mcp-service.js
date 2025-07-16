@@ -118,8 +118,7 @@ class MongoDBService {
         }
     }
 
-    // Get collection schema
-    // TODO: make it recursive for object fields
+    // Get collection schema recursively with nested objects
     async getCollectionSchema(collectionName, sampleSize = 5, includeNestedObjects = true) {
         try {
             const collection = this.db.collection(collectionName);
@@ -129,12 +128,10 @@ class MongoDBService {
                 throw new Error(`Collection "${collectionName}" is empty or doesn't exist`);
             }
 
-            // Получаем базовую схему от mongodb-schema
             const baseSchema = await getSimplifiedSchema(documents);
 
             let enhancedSchema = baseSchema;
 
-            // Если нужен анализ вложенных объектов
             if (includeNestedObjects) {
                 enhancedSchema = this.enhanceSchemaWithNestedObjects(baseSchema, documents);
             }
@@ -152,7 +149,6 @@ class MongoDBService {
         }
     }
 
-/// Улучшенная рекурсивная версия
     enhanceSchemaWithNestedObjects(baseSchema, documents, maxDepth = 3) {
         const enhanced = {...baseSchema};
 
@@ -196,7 +192,6 @@ class MongoDBService {
         return enhanced;
     }
 
-// Рекурсивный анализ структуры объектов
     analyzeObjectStructureRecursive(objects, maxDepth = 3, currentDepth = 0) {
         const fieldCounts = {};
         const fieldTypes = {};
@@ -216,7 +211,6 @@ class MongoDBService {
                 } else if (Array.isArray(value)) {
                     fieldTypes[key].add('array');
 
-                    // Анализируем объекты в массиве рекурсивно
                     if (currentDepth < maxDepth) {
                         const objectElements = value.filter(el =>
                             typeof el === 'object' && el !== null && !Array.isArray(el)
@@ -231,7 +225,6 @@ class MongoDBService {
                 } else if (typeof value === 'object') {
                     fieldTypes[key].add('object');
 
-                    // Собираем вложенные объекты для рекурсивного анализа
                     if (currentDepth < maxDepth) {
                         if (!nestedObjects[key]) {
                             nestedObjects[key] = {type: 'object', objects: []};
@@ -253,7 +246,6 @@ class MongoDBService {
                 totalSamples: objects.length
             };
 
-            // Добавляем рекурсивный анализ для вложенных объектов
             if (nestedObjects[field] && currentDepth < maxDepth) {
                 if (nestedObjects[field].type === 'object') {
                     structure[field].nestedStructure = this.analyzeObjectStructureRecursive(
@@ -270,7 +262,6 @@ class MongoDBService {
                 }
             }
 
-            // Добавляем информацию о глубине
             if (currentDepth < maxDepth && (nestedObjects[field])) {
                 structure[field].depth = currentDepth + 1;
                 structure[field].hasNestedObjects = true;
@@ -354,7 +345,7 @@ class MongoDBService {
         }
     }
 
-    // Find relationship between two specific collections
+    // Find a relationship between two specific collections
     async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 5) {
         if (!schema1 || !schema2) return null;
 
@@ -546,7 +537,7 @@ class MongoDBService {
     processObjectIds(query) {
         const processed = {...query};
 
-        // Helper function to check if string is a valid ObjectId
+        // Helper function to check if a string is a valid ObjectId
         const isValidObjectId = (str) => {
             if (typeof str !== 'string') return false;
             if (str.length !== 24) return false;
@@ -555,12 +546,10 @@ class MongoDBService {
 
         // Helper function to convert if valid ObjectId
         const convertToObjectId = (value) => {
-            // Если уже ObjectId, возвращаем как есть
             if (value instanceof ObjectId) {
                 return value;
             }
 
-            // Проверяем, является ли строка валидным ObjectId
             if (isValidObjectId(value)) {
                 try {
                     return new ObjectId(value);

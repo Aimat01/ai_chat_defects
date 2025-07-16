@@ -142,7 +142,6 @@ export class PostgresMcpService {
     }
 
 
-// Получить образцы данных из таблицы
     async getSampleData(tableName, limit = 3, columns = null) {
         try {
             const columnList = columns && columns.length > 0 ? columns.join(', ') : '*';
@@ -155,10 +154,8 @@ export class PostgresMcpService {
         }
     }
 
-// Анализировать связи между таблицами
     async analyzeRelationships(includeImplicitRelations = false) {
         try {
-            // Получаем информацию о внешних ключах
             const foreignKeys = await this.executeQuery(`
             SELECT
                 tc.table_name as from_table,
@@ -186,70 +183,6 @@ export class PostgresMcpService {
             return relationships;
         } catch (error) {
             throw new McpError(ErrorCode.InternalError, `Relationship analysis failed: ${error.message}`);
-        }
-    }
-
-    async executeOperation(operation, query, parameters = [], options = {}) {
-        try {
-            const { limit, timeout } = options;
-
-            // Валидация запроса
-            const trimmedQuery = query.trim().toLowerCase();
-            if (!trimmedQuery.startsWith('select') && !trimmedQuery.startsWith('with')) {
-                throw new McpError(ErrorCode.InvalidParams, 'Query must be a SELECT statement or CTE (WITH clause)');
-            }
-
-            let finalQuery = query;
-
-            // Применить лимит если указан и его нет в запросе
-            if (limit && !trimmedQuery.includes('limit')) {
-                finalQuery += ` LIMIT ${limit}`;
-            }
-
-            let result;
-            switch (operation) {
-                case 'select': {
-                    const rows = await this.executeQuery(finalQuery, parameters);
-                    result = {
-                        operation: 'select',
-                        rowCount: rows.length,
-                        rows: rows
-                    };
-                    break;
-                }
-
-                case 'count': {
-                    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as subquery`;
-                    const countResult = await this.executeQuery(countQuery, parameters);
-                    result = {
-                        operation: 'count',
-                        rowCount: 1,
-                        result: countResult[0]?.total || 0
-                    };
-                    break;
-                }
-
-                case 'exists': {
-                    const existsQuery = `SELECT EXISTS (${query}) as exists`;
-                    const existsResult = await this.executeQuery(existsQuery, parameters);
-                    result = {
-                        operation: 'exists',
-                        rowCount: 1,
-                        result: existsResult[0]?.exists || false
-                    };
-                    break;
-                }
-
-                default:
-                    throw new McpError(ErrorCode.InvalidParams, `Unsupported operation: ${operation}`);
-            }
-
-            return result;
-        } catch (error) {
-            if (error instanceof McpError) {
-                throw error;
-            }
-            throw new McpError(ErrorCode.InternalError, `Operation execution failed: ${error.message}`);
         }
     }
 }
