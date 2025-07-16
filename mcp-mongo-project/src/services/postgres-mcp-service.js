@@ -1,5 +1,5 @@
-import { DatabaseConnection } from '../utils/connection.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import {DatabaseConnection} from '../utils/connection.js';
+import {McpError, ErrorCode} from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -45,7 +45,7 @@ export class PostgresMcpService {
     // Execute SELECT queries
     async executeQuery(query, parameters = [], options = {}) {
         try {
-            const { limit, offset } = options;
+            const {limit, offset} = options;
             let finalQuery = query;
 
             if (limit) {
@@ -70,8 +70,10 @@ export class PostgresMcpService {
             }
 
             const tables = await this.db.query(
-                `SELECT table_name FROM information_schema.tables 
-                 WHERE table_schema = 'common_data' AND table_type = 'BASE TABLE' 
+                `SELECT table_name
+                 FROM information_schema.tables
+                 WHERE table_schema = 'common_data'
+                   AND table_type = 'BASE TABLE'
                  ORDER BY table_name`
             );
 
@@ -87,34 +89,9 @@ export class PostgresMcpService {
             const columns = await this.db.query(
                 `SELECT column_name, data_type, is_nullable, column_default
                  FROM information_schema.columns
-                 WHERE table_schema = 'common_data' AND table_name = $1
+                 WHERE table_schema = 'common_data'
+                   AND table_name = $1
                  ORDER BY ordinal_position`,
-                [tableName]
-            );
-
-            // Get constraint information
-            const constraints = await this.db.query(
-                `SELECT
-                   c.conname as constraint_name,
-                   CASE
-                     WHEN c.contype = 'p' THEN 'PRIMARY KEY'
-                     WHEN c.contype = 'f' THEN 'FOREIGN KEY'
-                     WHEN c.contype = 'u' THEN 'UNIQUE'
-                     WHEN c.contype = 'c' THEN 'CHECK'
-                     ELSE c.contype::text
-                   END as constraint_type,
-                   pg_get_constraintdef(c.oid) as definition
-                 FROM pg_constraint c
-                 JOIN pg_namespace n ON n.oid = c.connamespace
-                 JOIN pg_class cl ON cl.oid = c.conrelid
-                 WHERE n.nspname = 'common_data' AND cl.relname = $1`,
-                [tableName]
-            );
-
-            const indexes = await this.db.query(
-                `SELECT indexname, indexdef
-             FROM pg_indexes
-             WHERE tablename = $1 AND schemaname = 'common_data'`,
                 [tableName]
             );
 
@@ -126,15 +103,6 @@ export class PostgresMcpService {
                     nullable: col.is_nullable === 'YES',
                     default: col.column_default
                 })),
-                constraints: constraints.map(con => ({
-                    name: con.constraint_name,
-                    type: con.constraint_type,
-                    definition: con.definition
-                })),
-                indexes: indexes.map(idx => ({
-                    name: idx.indexname,
-                    definition: idx.indexdef
-                }))
             };
         } catch (error) {
             throw new McpError(ErrorCode.InternalError, `Table info retrieval failed: ${error.message}`);
@@ -145,7 +113,8 @@ export class PostgresMcpService {
     async getSampleData(tableName, limit = 3, columns = null) {
         try {
             const columnList = columns && columns.length > 0 ? columns.join(', ') : '*';
-            const query = `SELECT ${columnList} FROM ${tableName} LIMIT $1`;
+            const query = `SELECT ${columnList}
+                           FROM ${tableName} LIMIT $1`;
 
             const samples = await this.executeQuery(query, [limit]);
             return samples;
@@ -157,20 +126,19 @@ export class PostgresMcpService {
     async analyzeRelationships(includeImplicitRelations = false) {
         try {
             const foreignKeys = await this.executeQuery(`
-            SELECT
-                tc.table_name as from_table,
-                kcu.column_name as from_column,
-                ccu.table_name as to_table,
-                ccu.column_name as to_column,
-                tc.constraint_name
-            FROM information_schema.table_constraints AS tc
-            JOIN information_schema.key_column_usage AS kcu
-                ON tc.constraint_name = kcu.constraint_name
-            JOIN information_schema.constraint_column_usage AS ccu
-                ON ccu.constraint_name = tc.constraint_name
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-                AND tc.table_schema = 'common_data'
-        `);
+                SELECT tc.table_name   as from_table,
+                       kcu.column_name as from_column,
+                       ccu.table_name  as to_table,
+                       ccu.column_name as to_column,
+                       tc.constraint_name
+                FROM information_schema.table_constraints AS tc
+                         JOIN information_schema.key_column_usage AS kcu
+                              ON tc.constraint_name = kcu.constraint_name
+                         JOIN information_schema.constraint_column_usage AS ccu
+                              ON ccu.constraint_name = tc.constraint_name
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = 'common_data'
+            `);
 
             const relationships = {
                 explicitRelationships: foreignKeys,
