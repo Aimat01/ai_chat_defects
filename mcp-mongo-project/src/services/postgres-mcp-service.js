@@ -110,7 +110,7 @@ export class PostgresMcpService {
     }
 
 
-    async getSampleData(tableName, limit = 3, columns = null) {
+    async getSampleData(tableName, limit = 5, columns = null) {
         try {
             const columnList = columns && columns.length > 0 ? columns.join(', ') : '*';
             const query = `SELECT ${columnList}

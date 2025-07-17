@@ -20,45 +20,59 @@ const ai = new GoogleGenAI({apiKey});
 let tools = [];
 let chatHistory = [];
 
-const SYSTEM_PROMPT = `You are a database assistant that works with both MongoDB and PostgreSQL. Follow these rules:
+const SYSTEM_PROMPT = `Ты эксперт по анализу данных, работающий с PostgreSQL и MongoDB. Отвечай на том же языке, на котором задан вопрос.
 
-1. **Database Selection Logic:**
-   - Use **PostgreSQL ONLY** when working with these specific tables: daily_stat, last_signals, vehicle_maintenance, warning_for_day, warning_for_month
-   - Use **MongoDB** for all other data (equipments, defects, brands, etc.)
-   - **NEVER** look at PostgreSQL tables other than the 5 specified above
-   - **IGNORE** any MongoDB collections that have similar names to the PostgreSQL tables above - they are outdated
+АРХИТЕКТУРА ДАННЫХ:
+PostgreSQL - операционные данные:
+- daily_stat: пробег, моточасы, топливо, одометр (связь по gps_id)
+- vehicle_maintenance: затраты на обслуживание (связь по license_plate_number)
+- warning_for_day/warning_for_month: нормы работы (связь по license_plate_number)
+- last_signals: последние сигналы (связь по gps_id)
 
-3. Before making assumptions about table/collection relationships, ALWAYS:
-   - Use listCollections (for MongoDB) or pg_get_schema_info (for specific PostgreSQL tables only)
-   - Use getCollectionSchema (MongoDB) or pg_get_schema_info (PostgreSQL) to understand structures
-   - Look for fields ending with '_id' or 'Id' that might be references
+MongoDB - справочные данные:
+- equipments: базовая коллекция техники с license_plate_number, equipment_id, gps_id
+- defects: дефекты техники (связь по equipment_id)
+- users, employees: пользователи и сотрудники
+- tickets: заявки
+- brand, models: марки и модели
 
-4. Examples of correct queries:
-   **MongoDB (for equipments, defects, brands, etc.):**
-   - "how many defects have equipment X" → countDocuments('defects', {'equipment_id': 'X'})
-   - "find equipment with brand Y" → findDocuments('equipments', {'brand_id': 'Y'})
+ТОЧНЫЕ ПРАВИЛА ДЛЯ РАЗНЫХ ЗАПРОСОВ:
 
-5. If you're unsure about collection names or field names in MongoDB, use getCollectionSchema first
-6. For PostgreSQL, only query the 5 specified tables: daily_stat, last_signals, norms_for_month, norms_for_day, vehicle_maintenance, warning_for_day, warning_for_month
-   use pg_get_sample_data for see sample data and pg_get_schema_info to understand structure and columns and their types
-9. User can ask about different statistics or efficiency about equipments, defects, brands, etc.
-    You have to decide by yourself how you will calculate efficiency using both databases as needed
+1. ДЕФЕКТЫ (defects):
+   - Используй ТОЛЬКО MongoDB
+   - Алгоритм: equipments (найти по номеру → получить _id) → defects (по equipment_id)
+   - НЕ ОБРАЩАЙСЯ к PostgreSQL для дефектов
 
-10. When analyzing data, you should:
-    - First determine which database contains the needed data
-    - Get the collection/table schema to understand the structure
-    - Use appropriate queries to gather the data from both databases if needed
-    - Analyze and aggregate the results
-    - Provide a comprehensive answer based on your analysis
+2. ПРОБЕГ/ОДОМЕТР (mileage/odometer):
+   - Используй MongoDB + PostgreSQL
+   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
+   - ОБЯЗАТЕЛЬНО проверь оба источника
 
-11. IMPORTANT: 
-    - Never assume collection/table names or relationships exist without checking first
-    - For PostgreSQL: ONLY work with the 5 specified tables
-    - For MongoDB: Use for all other business data
-    - Ignore outdated MongoDB collections that match PostgreSQL table names
+3. МОТОЧАСЫ (engine hours):
+   - Используй MongoDB + PostgreSQL
+   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
+   - ОБЯЗАТЕЛЬНО проверь оба источника
 
-12. When you have gathered all necessary data and can provide a complete answer, simply provide your final response without calling any more tools.
-13. If collection/table do not contain any id (equipment_id) you can use data like license_plate_number and also on for linking between collections/tables`;
+4. ТОПЛИВО (fuel):
+   - Используй MongoDB + PostgreSQL
+   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
+   - ОБЯЗАТЕЛЬНО проверь оба источника
+
+5. ОБСЛУЖИВАНИЕ (maintenance):
+   - Используй MongoDB + PostgreSQL
+   - Алгоритм: equipments (найти по номеру → получить license_plate_number) → vehicle_maintenance (по ved_license_plate_number)
+   - ОБЯЗАТЕЛЬНО проверь оба источника
+
+6. ХАРАКТЕРИСТИКИ ТЕХНИКИ (equipment):
+   - Используй ТОЛЬКО MongoDB
+   - Алгоритм: equipments (найти по номеру)
+   - НЕ ОБРАЩАЙСЯ к PostgreSQL для базовых характеристик
+
+СТРОГИЙ АЛГОРИТМ:
+1. Определи ТИП запроса (дефекты, пробег, моточасы, топливо, обслуживание, характеристики)
+2. Следуй ТОЧНОМУ алгоритму для этого типа
+3. НЕ ДЕЛАЙ лишних запросов в неправильные базы данных
+4. Используй связующие поля только по назначению`;
 const mcpClient = new Client({
     name: 'mongodb-gemini-chatbot',
     version: "1.0.0",
@@ -133,7 +147,7 @@ mcpClient.connect(new SSEClientTransport(new URL("http://localhost:3001/sse"))).
 async function askGemini() {
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.5-pro',
             contents: chatHistory,
             config: {
                 tools: [
@@ -203,7 +217,7 @@ async function startChat() {
 
     while (true) {
         let userInput = readlineSync.question('\nYou: ');
-        userInput += "{workspace_id: '6658100482bdfc1c969c7455'}";
+        userInput += " {workspace_id: '6658100482bdfc1c969c7455'}";
 
         // Add user input to the chat history
         chatHistory.push({role: 'user', parts: [{text: userInput}]});
@@ -276,36 +290,44 @@ async function startChat() {
         }
     }
 }
-const MAX_HISTORY_LENGTH = 25;
+
+// const MAX_HISTORY_LENGTH = 25;
 const PRESERVE_SYSTEM_MESSAGES = 2;
 
 
 function trimChatHistory() {
-    if (chatHistory.length > MAX_HISTORY_LENGTH) {
-        let validEndIndex = chatHistory.length;
-
-        for (let i = chatHistory.length - 1; i >= 0; i--) {
-            const message = chatHistory[i];
-
-            if (message.role === 'model' &&
-                message.parts.some(part => part.functionCall)) {
-
-                const nextMessage = chatHistory[i + 1];
-                if (!nextMessage ||
-                    nextMessage.role !== 'user' ||
-                    !nextMessage.parts.some(part => part.functionResponse)) {
-                    validEndIndex = i; 
-                    break;
-                }
-            }
-        }
-
-        const systemMessages = chatHistory.slice(0, PRESERVE_SYSTEM_MESSAGES);
-        const remainingSpace = MAX_HISTORY_LENGTH - PRESERVE_SYSTEM_MESSAGES;
-        const startIndex = Math.max(PRESERVE_SYSTEM_MESSAGES, validEndIndex - remainingSpace);
-        const recentMessages = chatHistory.slice(startIndex, validEndIndex);
-
-        chatHistory = [...systemMessages, ...recentMessages];
-        console.log('Chat history trimmed to prevent overflow');
-    }
+    const systemMessages = chatHistory.slice(0, PRESERVE_SYSTEM_MESSAGES);
+    chatHistory = [...systemMessages];
+    console.log('Chat history trimmed to only preserve system messages');
 }
+
+// function trimChatHistory() {
+//     let validEndIndex = chatHistory.length;
+//
+//     for (let i = chatHistory.length - 1; i >= 0; i--) {
+//         const message = chatHistory[i];
+//
+//         if (message.role === 'model' &&
+//             message.parts.some(part => part.functionCall)) {
+//
+//             const nextMessage = chatHistory[i + 1];
+//             if (!nextMessage ||
+//                 nextMessage.role !== 'user' ||
+//                 !nextMessage.parts.some(part => part.functionResponse)) {
+//                 validEndIndex = i;
+//                 break;
+//             }
+//         }
+//     }
+//
+//     const systemMessages = chatHistory.slice(0, PRESERVE_SYSTEM_MESSAGES);
+//
+//     const recentMessages = chatHistory.slice(PRESERVE_SYSTEM_MESSAGES, validEndIndex);
+//
+//     chatHistory = [...systemMessages, ...recentMessages];
+//     console.log('Chat history trimmed to prevent overflow');
+//
+// }
+
+// const remainingSpace = MAX_HISTORY_LENGTH - PRESERVE_SYSTEM_MESSAGES;
+// const startIndex = Math.max(PRESERVE_SYSTEM_MESSAGES, validEndIndex - remainingSpace);
