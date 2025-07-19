@@ -44,7 +44,7 @@ server.tool(
     "Find and retrieve documents from a MongoDB collection. Use this when you need to see actual document content or search with specific criteria. For counting with filters, use this tool instead of countDocuments.",
     {
         collection: z.string().describe("The collection name to query (e.g., 'defects', 'equipments', 'brands')"),
-        query: z.record(z.any()).describe("The query filter object to match documents. Examples: {'equipment_id': '665ec912c81eefbf37c8e18a'} for defects by equipment, {'_id': 'some_id'} for specific document, {} for all documents").optional().default({}),
+        query: z.record(z.any()).describe("The query filter object to match documents.").optional().default({}),
         options: z.object({
             limit: z.number().optional().describe("Maximum number of documents to return (default: no limit)"),
             skip: z.number().optional().describe("Number of documents to skip for pagination"),
@@ -84,7 +84,7 @@ server.tool(
     "Find a single document in a MongoDB collection. Use this when you need exactly one document by ID or specific criteria.",
     {
         collection: z.string().describe("The collection name to query"),
-        query: z.record(z.any()).describe("The query filter to find the document. Example: {'_id': 'document_id'} or {'name': 'specific_name'}"),
+        query: z.record(z.any()).describe("The query filter to find the document."),
         options: z.object({
             projection: z.record(z.number()).optional().describe("Fields to include or exclude in the result")
         }).optional().default({})
@@ -173,10 +173,10 @@ server.tool(
 
 server.tool(
     "countDocuments",
-    "Count documents in a MongoDB collection. IMPORTANT: Always use the 'query' parameter to filter documents when counting specific subsets. For example, to count defects for a specific equipment, use query: {'equipment_id': 'equipment_id_value'}",
+    "Count documents in a MongoDB collection. IMPORTANT: Always use the 'query' parameter to filter documents when counting specific subsets.",
     {
         collection: z.string().describe("The collection name to count documents in"),
-        query: z.record(z.any()).describe("REQUIRED filter object to count specific documents. Examples: {'equipment_id': '665ec912c81eefbf37c8e18a'} to count defects for specific equipment, {'status': 'active'} to count active items, {} for all documents").default({})
+        query: z.record(z.any()).describe("REQUIRED filter object to count specific documents.").default({})
     },
     async (arg) => {
         try {
@@ -300,101 +300,6 @@ server.tool(
     }
 );
 
-// Helper tool to guide AI about relationships
-server.tool(
-    "getDatabaseInfo",
-    "Get helpful information about database relationships and query patterns. Use this to understand how to query related data.",
-    {
-        analyzeRelationships: z.boolean().optional().default(false).describe("Whether to analyze actual relationships between collections (may take time for large databases)"),
-        sampleSize: z.number().optional().default(3).describe("Number of documents to sample for relationship analysis (smaller = faster)")
-    },
-    async (arg) => {
-        try {
-            const { analyzeRelationships, sampleSize } = arg;
-
-            // Get actual collections first
-            const collections = await mongoService.listCollections();
-
-            // Get dynamic relationship information based on actual collections
-            const staticInfo = {
-                "available_collections": collections,
-                "general_patterns": {
-                    "foreign_keys": "Look for fields ending with '_id' or 'Id' - these often reference other collections",
-                    "timestamps": "Fields like 'created_at', 'updated_at' contain date/time information",
-                    "references": "Use getCollectionSchema to understand field structures and potential relationships"
-                },
-                "query_examples": {
-                    "count_with_filter": "countDocuments('collection', {'field': 'value'})",
-                    "find_with_filter": "findDocuments('collection', {'field': 'value'})",
-                    "get_specific_document": "findOneDocument('collection', {'_id': 'document_id'})"
-                },
-                "tips": [
-                    "Always use query filters when looking for specific relationships",
-                    "Use findDocuments when you need actual data, countDocuments when you just need counts",
-                    "Check collection schemas first if you're unsure about field names",
-                    "Use listCollections to see what collections are available",
-                    "Look for fields ending with '_id' to find potential relationships"
-                ]
-            };
-
-            const response = {
-                content: [
-                    {
-                        type: "text",
-                        text: "Database information and query guidance:"
-                    },
-                    {
-                        type: "text",
-                        text: JSON.stringify(staticInfo, null, 2)
-                    }
-                ]
-            };
-
-            // Only analyze relationships if explicitly requested
-            if (analyzeRelationships) {
-                try {
-                    // Add timeout for relationship analysis
-                    const timeoutPromise = new Promise((_, reject) => {
-                        setTimeout(() => reject(new Error('Relationship analysis timed out')), 30000); // 30 seconds timeout
-                    });
-
-                    const analysisPromise = mongoService.analyzeCollectionRelationships(sampleSize);
-                    const relationshipAnalysis = await Promise.race([analysisPromise, timeoutPromise]);
-
-                    response.content.push({
-                        type: "text",
-                        text: "\nAnalyzed relationship patterns in the database:"
-                    });
-                    response.content.push({
-                        type: "text",
-                        text: JSON.stringify(relationshipAnalysis, null, 2)
-                    });
-                } catch (analysisError) {
-                    response.content.push({
-                        type: "text",
-                        text: `\nNote: Could not analyze relationships dynamically: ${analysisError.message}`
-                    });
-                }
-            } else {
-                response.content.push({
-                    type: "text",
-                    text: "\nNote: Use 'analyzeRelationships: true' parameter to get dynamic relationship analysis."
-                });
-            }
-
-            return response;
-        } catch (error) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error getting database info: ${error.message}`
-                    }
-                ]
-            };
-        }
-    }
-);
 
 // Sample Data Tool
 server.tool(
@@ -402,7 +307,7 @@ server.tool(
     "Get sample documents from a collection to understand data structure and field types. Useful for debugging query issues.",
     {
         collection: z.string().describe("The collection name to sample"),
-        limit: z.number().optional().default(3).describe("Number of sample documents to return"),
+        limit: z.number().optional().default(5).describe("Number of sample documents to return"),
         fields: z.array(z.string()).optional().describe("Specific fields to show (leave empty for all fields)")
     },
     async (arg) => {
@@ -440,80 +345,12 @@ server.tool(
     }
 );
 
-// Analyze Collection Relationships Tool
-server.tool(
-    "analyzeCollectionRelationships",
-    "Analyze relationships between collections in the database. This may take time for large databases.",
-    {
-        sampleSize: z.number().optional().default(3).describe("Number of documents to sample for relationship analysis (smaller = faster)"),
-        maxCollections: z.number().optional().default(10).describe("Maximum number of collections to analyze (to prevent timeouts)")
-    },
-    async (arg) => {
-        try {
-            const { sampleSize, maxCollections } = arg;
-            
-            // Get list of collections first
-            const allCollections = await mongoService.listCollections();
-            
-            if (allCollections.length === 0) {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: "No collections found in the database."
-                        }
-                    ]
-                };
-            }
-            
-            // Limit collections to analyze
-            const collectionsToAnalyze = allCollections.slice(0, maxCollections);
-            
-            if (collectionsToAnalyze.length < allCollections.length) {
-                console.log(`Analyzing first ${collectionsToAnalyze.length} of ${allCollections.length} collections to prevent timeout`);
-            }
-            
-            // Add timeout for the entire analysis
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Analysis timed out after 45 seconds')), 45000);
-            });
-
-            const analysisPromise = mongoService.analyzeCollectionRelationships(sampleSize);
-            const relationshipAnalysis = await Promise.race([analysisPromise, timeoutPromise]);
-            
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Relationship analysis completed for ${collectionsToAnalyze.length} collections:`
-                    },
-                    {
-                        type: "text",
-                        text: JSON.stringify(relationshipAnalysis, null, 2)
-                    }
-                ]
-            };
-        } catch (error) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error analyzing relationships: ${error.message}`
-                    }
-                ]
-            };
-        }
-    }
-);
-
-
 // POSTGRES MCP TOOLS
 // Execute Query Tool (SELECT operations)
 server.tool(
     "pg_execute_query",
     "Execute SELECT queries and data retrieval operations. Use this for SELECT, WITH clauses, and other read operations.",
     {
-        connectionString: z.string().optional().describe('PostgreSQL connection string (optional)'),
         operation: z.enum(['select', 'count', 'exists']).describe('Query operation: select (fetch rows), count (count rows), exists (check existence)'),
         query: z.string().describe('SQL SELECT query to execute'),
         parameters: z.array(z.unknown()).optional().default([]).describe('Parameter values for prepared statement placeholders ($1, $2, etc.)'),
@@ -522,11 +359,7 @@ server.tool(
     },
     async (args) => {
         try {
-            const { connectionString, operation, query, parameters = [], limit, timeout } = args;
-
-            if (connectionString) {
-                await postgresService.connect(connectionString);
-            }
+            const { operation, query, parameters = [], limit, timeout } = args;
 
             // Validate query is a SELECT-like operation
             const trimmedQuery = query.trim().toLowerCase();
