@@ -41,27 +41,27 @@ const app = express();
 // MongoDB Find Documents Tool
 server.tool(
     "findDocuments",
-    "Find and retrieve documents from a MongoDB collection. Use this when you need to see actual document content or search with specific criteria. For counting with filters, use this tool instead of countDocuments.",
+    "Найти и получить документы из коллекции MongoDB. Используйте это, когда нужно увидеть фактическое содержимое документов или искать по определенным критериям. Для подсчета с фильтрами используйте этот инструмент вместо countDocuments.",
     {
-        collection: z.string().describe("The collection name to query (e.g., 'defects', 'equipments', 'brands')"),
-        query: z.record(z.any()).describe("The query filter object to match documents.").optional().default({}),
+        collection: z.string().describe("Название коллекции для запроса (например, 'defects', 'equipments', 'brands')"),
+        query: z.record(z.any()).describe("Объект фильтра запроса для соответствия документов").optional().default({}),
         options: z.object({
-            limit: z.number().optional().describe("Maximum number of documents to return (default: no limit)"),
-            skip: z.number().optional().describe("Number of documents to skip for pagination"),
-            sort: z.record(z.number()).optional().describe("Sort criteria: {field: 1} for ascending, {field: -1} for descending"),
-            projection: z.record(z.number()).optional().describe("Fields to include (1) or exclude (0): {'name': 1, '_id': 0}")
+            limit: z.number().optional().describe("Максимальное количество возвращаемых документов (по умолчанию: без ограничения)"),
+            skip: z.number().optional().describe("Количество документов для пропуска при пагинации"),
+            sort: z.record(z.number()).optional().describe("Критерии сортировки: {field: 1} для возрастания, {field: -1} для убывания"),
+            projection: z.record(z.number()).optional().describe("Поля для включения (1) или исключения (0): {'name': 1, '_id': 0}")
         }).optional().default({})
     },
     async (arg) => {
         try {
             const { collection, query, options } = arg;
             const results = await mongoService.find(collection, query, options);
-            
+
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Found ${results.length} documents in collection '${collection}'\n${JSON.stringify(results, null, 2)}`
+                        text: `Найдено ${results.length} документов в коллекции '${collection}'\n${JSON.stringify(results, null, 2)}`
                     }
                 ]
             };
@@ -70,7 +70,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error finding documents: ${error.message}`
+                        text: `Ошибка поиска документов: ${error.message}`
                     }
                 ]
             };
@@ -81,26 +81,26 @@ server.tool(
 // MongoDB Find One Document Tool
 server.tool(
     "findOneDocument",
-    "Find a single document in a MongoDB collection. Use this when you need exactly one document by ID or specific criteria.",
+    "Найти один документ в коллекции MongoDB. Используйте это, когда нужен ровно один документ по ID или определенным критериям.",
     {
-        collection: z.string().describe("The collection name to query"),
-        query: z.record(z.any()).describe("The query filter to find the document."),
+        collection: z.string().describe("Название коллекции для запроса"),
+        query: z.record(z.any()).describe("Фильтр запроса для поиска документа"),
         options: z.object({
-            projection: z.record(z.number()).optional().describe("Fields to include or exclude in the result")
+            projection: z.record(z.number()).optional().describe("Поля для включения или исключения в результате")
         }).optional().default({})
     },
     async (arg) => {
         try {
             const { collection, query, options } = arg;
             const result = await mongoService.findOne(collection, query, options);
-            
+
             return {
                 content: [
                     {
                         type: "text",
-                        text: result 
-                            ? `Found document in collection '${collection}':\n${JSON.stringify(result, null, 2)}`
-                            : `No document found in collection '${collection}' matching the query`
+                        text: result
+                            ? `Найден документ в коллекции '${collection}':\n${JSON.stringify(result, null, 2)}`
+                            : `Документ не найден в коллекции '${collection}' по заданному запросу`
                     }
                 ]
             };
@@ -109,7 +109,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error finding document: ${error.message}`
+                        text: `Ошибка поиска документа: ${error.message}`
                     }
                 ]
             };
@@ -119,37 +119,37 @@ server.tool(
 
 server.tool(
     "aggregateDocuments",
-    "Run aggregation pipeline on a MongoDB collection. Use this for complex queries like grouping, counting by field, finding max/min values, etc.",
+    "Выполнить агрегационный конвейер на коллекции MongoDB. Используйте это для сложных запросов, таких как группировка, подсчет по полям, поиск макс/мин значений и т.д.",
     {
-        collection: z.string().describe("The collection name to run aggregation on"),
-        pipeline: z.array(z.record(z.any())).describe("MongoDB aggregation pipeline stages. Example: [{'$group': {'_id': '$field', 'count': {'$sum': 1}}}, {'$sort': {'count': -1}}]")
+        collection: z.string().describe("Название коллекции для выполнения агрегации"),
+        pipeline: z.array(z.record(z.any())).describe("Этапы агрегационного конвейера MongoDB. Пример: [{'$group': {'_id': '$field', 'count': {'$sum': 1}}}, {'$sort': {'count': -1}}]")
     },
     async (arg) => {
         try {
             const { collection, pipeline } = arg;
             const results = await mongoService.aggregate(collection, pipeline);
-            
-            let responseText = `Aggregation on collection '${collection}' returned ${results.length} results`;
-            
+
+            let responseText = `Агрегация коллекции '${collection}' вернула ${results.length} результатов`;
+
             if (results.length > 0) {
                 responseText += `:\n${JSON.stringify(results, null, 2)}`;
-                
+
                 if (results[0].count !== undefined || results[0]._id !== undefined) {
-                    responseText += `\n\nSummary:`;
+                    responseText += `\n\nСводка:`;
                     results.slice(0, 5).forEach((result, index) => {
                         if (result._id && result.count !== undefined) {
-                            responseText += `\n${index + 1}. ID: ${result._id} - Count: ${result.count}`;
+                            responseText += `\n${index + 1}. ID: ${result._id} - Количество: ${result.count}`;
                         }
                     });
-                    
+
                     if (results.length > 5) {
-                        responseText += `\n... and ${results.length - 5} more results`;
+                        responseText += `\n... и еще ${results.length - 5} результатов`;
                     }
                 }
             } else {
-                responseText += `. No documents matched the aggregation criteria.`;
+                responseText += `. Ни один документ не соответствует критериям агрегации.`;
             }
-            
+
             return {
                 content: [
                     {
@@ -163,7 +163,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error running aggregation: ${error.message}\nPipeline used: ${JSON.stringify(arg.pipeline, null, 2)}`
+                        text: `Ошибка выполнения агрегации: ${error.message}\nИспользованный конвейер: ${JSON.stringify(arg.pipeline, null, 2)}`
                     }
                 ]
             };
@@ -173,21 +173,21 @@ server.tool(
 
 server.tool(
     "countDocuments",
-    "Count documents in a MongoDB collection. IMPORTANT: Always use the 'query' parameter to filter documents when counting specific subsets.",
+    "Подсчитать документы в коллекции MongoDB. ВАЖНО: Всегда используйте параметр 'query' для фильтрации документов при подсчете определенных подмножеств.",
     {
-        collection: z.string().describe("The collection name to count documents in"),
-        query: z.record(z.any()).describe("REQUIRED filter object to count specific documents.").default({})
+        collection: z.string().describe("Название коллекции для подсчета документов"),
+        query: z.record(z.any()).describe("ОБЯЗАТЕЛЬНЫЙ объект фильтра для подсчета определенных документов").default({})
     },
     async (arg) => {
         try {
             const { collection, query } = arg;
             const count = await mongoService.countDocuments(collection, query);
-            
+
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Found ${count} documents in collection '${collection}' matching query: ${JSON.stringify(query)}`
+                        text: `Найдено ${count} документов в коллекции '${collection}', соответствующих запросу: ${JSON.stringify(query)}`
                     }
                 ]
             };
@@ -196,7 +196,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error counting documents: ${error.message}`
+                        text: `Ошибка подсчета документов: ${error.message}`
                     }
                 ]
             };
@@ -207,17 +207,17 @@ server.tool(
 // MongoDB List Collections Tool
 server.tool(
     "listCollections",
-    "List all collections in the database to understand the database structure",
+    "Показать все коллекции в базе данных для понимания структуры базы данных",
     {},
     async () => {
         try {
             const collections = await mongoService.listCollections();
-            
+
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Found ${collections.length} collections in the database`
+                        text: `Найдено ${collections.length} коллекций в базе данных`
                     },
                     {
                         type: "text",
@@ -230,7 +230,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error listing collections: ${error.message}`
+                        text: `Ошибка получения списка коллекций: ${error.message}`
                     }
                 ]
             };
@@ -241,10 +241,10 @@ server.tool(
 // MongoDB Collection Schema Tool
 server.tool(
     "getCollectionSchema",
-    "Analyze the structure and field types of a MongoDB collection to understand what fields are available for querying",
+    "Проанализировать структуру и типы полей коллекции MongoDB для понимания доступных полей для запросов",
     {
-        collection: z.string().describe("The collection name to analyze"),
-        sampleSize: z.number().optional().default(5).describe("Number of documents to sample for schema analysis")
+        collection: z.string().describe("Название коллекции для анализа"),
+        sampleSize: z.number().optional().default(5).describe("Количество документов для выборки при анализе схемы")
     },
     async (arg) => {
         try {
@@ -257,11 +257,11 @@ server.tool(
                     content: [
                         {
                             type: "text",
-                            text: `Collection '${collection}' does not exist in the database.`
+                            text: `Коллекция '${collection}' не существует в базе данных.`
                         },
                         {
                             type: "text",
-                            text: `Available collections: ${JSON.stringify(collections, null, 2)}`
+                            text: `Доступные коллекции: ${JSON.stringify(collections, null, 2)}`
                         }
                     ]
                 };
@@ -275,11 +275,11 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Schema analysis for collection '${collection}' (sampled ${schemaInfo.documentCount} documents)`
+                        text: `Анализ схемы коллекции '${collection}' (проанализировано ${schemaInfo.documentCount} документов)`
                     },
                     {
                         type: "text",
-                        text: `Found ${fieldsCount} fields in the schema`
+                        text: `Найдено ${fieldsCount} полей в схеме`
                     },
                     {
                         type: "text",
@@ -292,7 +292,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error getting schema for collection '${arg.collection}': ${error.message}`
+                        text: `Ошибка получения схемы коллекции '${arg.collection}': ${error.message}`
                     }
                 ]
             };
@@ -304,31 +304,31 @@ server.tool(
 // Sample Data Tool
 server.tool(
     "getSampleData",
-    "Get sample documents from a collection to understand data structure and field types. Useful for debugging query issues.",
+    "Получить примеры документов из коллекции для понимания структуры данных и типов полей. Полезно для отладки проблем с запросами.",
     {
-        collection: z.string().describe("The collection name to sample"),
-        limit: z.number().optional().default(5).describe("Number of sample documents to return"),
-        fields: z.array(z.string()).optional().describe("Specific fields to show (leave empty for all fields)")
+        collection: z.string().describe("Название коллекции для выборки"),
+        limit: z.number().optional().default(5).describe("Количество возвращаемых примеров документов"),
+        fields: z.array(z.string()).optional().describe("Конкретные поля для отображения (оставьте пустым для всех полей)")
     },
     async (arg) => {
         try {
             const { collection, limit, fields } = arg;
-            
+
             let projection = {};
             if (fields && fields.length > 0) {
                 fields.forEach(field => projection[field] = 1);
             }
-            
-            const samples = await mongoService.find(collection, {}, { 
+
+            const samples = await mongoService.find(collection, {}, {
                 limit,
                 projection: Object.keys(projection).length > 0 ? projection : {}
             });
-            
+
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Sample ${samples.length} documents from collection '${collection}':\n${JSON.stringify(samples, null, 2)}`
+                        text: `Примеры ${samples.length} документов из коллекции '${collection}':\n${JSON.stringify(samples, null, 2)}`
                     }
                 ]
             };
@@ -337,7 +337,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error getting sample data: ${error.message}`
+                        text: `Ошибка получения примеров данных: ${error.message}`
                     }
                 ]
             };
@@ -349,13 +349,13 @@ server.tool(
 // Execute Query Tool (SELECT operations)
 server.tool(
     "pg_execute_query",
-    "Execute SELECT queries and data retrieval operations. Use this for SELECT, WITH clauses, and other read operations.",
+    "Выполнить SELECT запросы и операции получения данных. Используйте это для SELECT, WITH конструкций и других операций чтения.",
     {
-        operation: z.enum(['select', 'count', 'exists']).describe('Query operation: select (fetch rows), count (count rows), exists (check existence)'),
-        query: z.string().describe('SQL SELECT query to execute'),
-        parameters: z.array(z.unknown()).optional().default([]).describe('Parameter values for prepared statement placeholders ($1, $2, etc.)'),
-        limit: z.number().optional().describe('Maximum number of rows to return (safety limit)'),
-        timeout: z.number().optional().describe('Query timeout in milliseconds')
+        operation: z.enum(['select', 'count', 'exists']).describe('Операция запроса: select (получить строки), count (подсчитать строки), exists (проверить существование)'),
+        query: z.string().describe('SQL SELECT запрос для выполнения'),
+        parameters: z.array(z.unknown()).optional().default([]).describe('Значения параметров для заполнителей подготовленного оператора ($1, $2, и т.д.)'),
+        limit: z.number().optional().describe('Максимальное количество возвращаемых строк (ограничение безопасности)'),
+        timeout: z.number().optional().describe('Таймаут запроса в миллисекундах')
     },
     async (args) => {
         try {
@@ -364,7 +364,7 @@ server.tool(
             // Validate query is a SELECT-like operation
             const trimmedQuery = query.trim().toLowerCase();
             if (!trimmedQuery.startsWith('select') && !trimmedQuery.startsWith('with')) {
-                throw new McpError(ErrorCode.InvalidParams, 'Query must be a SELECT statement or CTE (WITH clause)');
+                throw new McpError(ErrorCode.InvalidParams, 'Запрос должен быть оператором SELECT или CTE (WITH конструкция)');
             }
 
             let finalQuery = query;
@@ -412,13 +412,13 @@ server.tool(
             let responseText = '';
             switch (operation) {
                 case 'select':
-                    responseText = `Query executed successfully. Retrieved ${result.rowCount} rows.\n\nResults:\n${JSON.stringify(result.rows, null, 2)}`;
+                    responseText = `Запрос выполнен успешно. Получено ${result.rowCount} строк.\n\nРезультаты:\n${JSON.stringify(result.rows, null, 2)}`;
                     break;
                 case 'count':
-                    responseText = `Count query executed successfully. Total rows: ${result.result}`;
+                    responseText = `Запрос подсчета выполнен успешно. Всего строк: ${result.result}`;
                     break;
                 case 'exists':
-                    responseText = `Exists query executed successfully. Result: ${result.result ? 'EXISTS' : 'NOT EXISTS'}`;
+                    responseText = `Запрос существования выполнен успешно. Результат: ${result.result ? 'СУЩЕСТВУЕТ' : 'НЕ СУЩЕСТВУЕТ'}`;
                     break;
             }
 
@@ -435,7 +435,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error executing ${args.operation} query: ${error.message}`
+                        text: `Ошибка выполнения ${args.operation} запроса: ${error.message}`
                     }
                 ]
             };
@@ -447,10 +447,10 @@ server.tool(
 // Get Schema Info Tool
 server.tool(
     "pg_get_schema_info",
-    "Get schema information for a database or specific table. Use this to understand table structure.",
+    "Получить информацию о схеме базы данных или конкретной таблицы. Используйте это для понимания структуры таблицы.",
     {
-        connectionString: z.string().optional().describe('PostgreSQL connection string (optional)'),
-        tableName: z.string().optional().describe("Optional table name to get detailed schema for")
+        connectionString: z.string().optional().describe('Строка подключения PostgreSQL (необязательно)'),
+        tableName: z.string().optional().describe("Необязательное имя таблицы для получения подробной схемы")
     },
     async (args) => {
         try {
@@ -463,8 +463,8 @@ server.tool(
             const result = await postgresService.getSchemaInfo(tableName);
 
             const message = tableName
-                ? `Schema information for table ${tableName}`
-                : 'List of tables in database';
+                ? `Информация о схеме таблицы ${tableName}`
+                : 'Список таблиц в базе данных';
 
             return {
                 content: [
@@ -483,7 +483,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error getting schema info: ${error.message}`
+                        text: `Ошибка получения информации о схеме: ${error.message}`
                     }
                 ]
             };
@@ -493,12 +493,12 @@ server.tool(
 
 server.tool(
     "pg_get_sample_data",
-    "Get sample rows from a PostgreSQL table to understand data structure",
+    "Получить примеры строк из таблицы PostgreSQL для понимания структуры данных",
     {
         connectionString: z.string().optional(),
-        tableName: z.string().describe("Table name to sample"),
-        limit: z.number().optional().default(3).describe("Number of sample rows to return"),
-        columns: z.array(z.string()).optional().describe("Specific columns to show (leave empty for all columns)")
+        tableName: z.string().describe("Имя таблицы для выборки"),
+        limit: z.number().optional().default(3).describe("Количество возвращаемых примеров строк"),
+        columns: z.array(z.string()).optional().describe("Конкретные столбцы для отображения (оставьте пустым для всех столбцов)")
     },
     async (args) => {
         try {
@@ -514,7 +514,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Sample ${samples.length} rows from table '${tableName}':\n${JSON.stringify(samples, null, 2)}`
+                        text: `Примеры ${samples.length} строк из таблицы '${tableName}':\n${JSON.stringify(samples, null, 2)}`
                     }
                 ]
             };
@@ -523,7 +523,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error getting sample data: ${error.message}`
+                        text: `Ошибка получения примеров данных: ${error.message}`
                     }
                 ]
             };
@@ -533,10 +533,10 @@ server.tool(
 
 server.tool(
     "pg_analyze_relationships",
-    "Analyze relationships between PostgreSQL tables based on foreign keys",
+    "Проанализировать взаимосвязи между таблицами PostgreSQL на основе внешних ключей",
     {
         connectionString: z.string().optional(),
-        includeImplicitRelations: z.boolean().optional().default(false).describe("Also look for implicit relationships based on column naming patterns")
+        includeImplicitRelations: z.boolean().optional().default(false).describe("Также искать неявные взаимосвязи на основе шаблонов именования столбцов")
     },
     async (args) => {
         try {
@@ -552,7 +552,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: "PostgreSQL table relationships analysis:"
+                        text: "Анализ взаимосвязей таблиц PostgreSQL:"
                     },
                     {
                         type: "text",
@@ -565,7 +565,7 @@ server.tool(
                 content: [
                     {
                         type: "text",
-                        text: `Error analyzing relationships: ${error.message}`
+                        text: `Ошибка анализа взаимосвязей: ${error.message}`
                     }
                 ]
             };

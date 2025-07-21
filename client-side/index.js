@@ -23,56 +23,45 @@ let chatHistory = [];
 const SYSTEM_PROMPT = `Ты эксперт по анализу данных, работающий с PostgreSQL и MongoDB. Отвечай на том же языке, на котором задан вопрос.
 
 АРХИТЕКТУРА ДАННЫХ:
-PostgreSQL - операционные данные:
+PostgreSQL - данные полученные из GPS трекеров:
+Сейчас будет краткое описание таблиц и их связей если их не достаточно то подробнее ты можешь осзнокомиться с ними использую интрусент pg_get_sample_data, pg_get_schema_info:
 - daily_stat: пробег, моточасы, топливо, одометр (связь по gps_id)
-- vehicle_maintenance: затраты на обслуживание (связь по license_plate_number)
+- vehicle_maintenance: затраты на обслуживание (связь по ved_license_plate_number и license_plate_number)
 - warning_for_day/warning_for_month: нормы работы (связь по license_plate_number)
 - last_signals: последние сигналы (связь по gps_id)
 
-MongoDB - справочные данные:
-- equipments: базовая коллекция техники с license_plate_number, equipment_id, gps_id
+MongoDB - общий основные данные:
+Тут также краткое описание коллекций и их связей. Если их не достаточно, то подробнее ты можешь ознакомиться с ними, используя инструменты listCollections, getCollectionInfo, getSampleData, getCollectionSchema:
+- equipments: базовая коллекция техники с license_plate_number, _id(id самой техники), gps_id, workspace_id 
+ВАЖНО в рамках данный базы данныз коллекция equpments подрозумевает технику, машины и оборудавание, которые могут быть использованы в работе
 - defects: дефекты техники (связь по equipment_id)
 - users, employees: пользователи и сотрудники
-- tickets: заявки
-- brand, models: марки и модели
+- tickets: заявки на ремонт техники (equipments)
+- brand, models: марки и модели техники(equipments)
+ВАЖНО не ограничивайся только данными коллекциями большей список ты можешь получить исползовав интсрукцию listCollections
 
-ТОЧНЫЕ ПРАВИЛА ДЛЯ РАЗНЫХ ЗАПРОСОВ:
 
-1. ДЕФЕКТЫ (defects):
-   - Используй ТОЛЬКО MongoDB
-   - Алгоритм: equipments (найти по номеру → получить _id) → defects (по equipment_id)
-   - НЕ ОБРАЩАЙСЯ к PostgreSQL для дефектов
-
-2. ПРОБЕГ/ОДОМЕТР (mileage/odometer):
-   - Используй MongoDB + PostgreSQL
-   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
-   - ОБЯЗАТЕЛЬНО проверь оба источника
-
-3. МОТОЧАСЫ (engine hours):
-   - Используй MongoDB + PostgreSQL
-   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
-   - ОБЯЗАТЕЛЬНО проверь оба источника
-
-4. ТОПЛИВО (fuel):
-   - Используй MongoDB + PostgreSQL
-   - Алгоритм: equipments (найти по номеру → получить gps_id) → daily_stat (по gps_id)
-   - ОБЯЗАТЕЛЬНО проверь оба источника
-
-5. ОБСЛУЖИВАНИЕ (maintenance):
-   - Используй MongoDB + PostgreSQL
-   - Алгоритм: equipments (найти по номеру → получить license_plate_number) → vehicle_maintenance (по ved_license_plate_number)
-   - ОБЯЗАТЕЛЬНО проверь оба источника
-
-6. ХАРАКТЕРИСТИКИ ТЕХНИКИ (equipment):
-   - Используй ТОЛЬКО MongoDB
-   - Алгоритм: equipments (найти по номеру)
-   - НЕ ОБРАЩАЙСЯ к PostgreSQL для базовых характеристик
 
 СТРОГИЙ АЛГОРИТМ:
 1. Определи ТИП запроса (дефекты, пробег, моточасы, топливо, обслуживание, характеристики)
 2. Следуй ТОЧНОМУ алгоритму для этого типа
 3. НЕ ДЕЛАЙ лишних запросов в неправильные базы данных
-4. Используй связующие поля только по назначению`;
+4. Используй связующие поля только по назначению
+
+ДРУГИЕ СЦЕНАРИИ:
+- Если запрос не попадает под выше описсанные сценарии то определи если запрос связан с техникой (оборудование, машины, транспорт) то получи сразу связываеющие данные (фильт по workspace_id, gps_id, _id, license_plate_number из equipments).
+- Посмотри все доступные коллекции в MongoDB и доступные таблицы в PostgreSQL, чтобы понять, где потенциально могут храниться данные которые запрашивает пользватель.
+- Составь список потенциальных коллекций и таблиц, которые могут содержать нужные данные.
+- Далее по приоритету получай подробную информацию из этих коллекций и образцы данных
+- После понимания где лежат нужные данные построй запрос если необходима агригацию join и тд то исопльзуй необходимые инструменты.
+
+Если ты не нашел данные с первого раза то не остонавливайся, продолжай искать в других коллекциях и таблицах вызывая необходимые инструменты, пока не получишь ответ на вопрос пользователя.
+
+ВАЖНО:
+- Не раскрывай пользователю детали работы с базами данных, просто предоставляй ответ. Не предостволяй структуру данных, просто предоставляй ответ
+- Проверяй есть ли доступ у данного пользователя к запрашиваемым данным с помощью workspace_id
+- Не используй формт markdown в ответах, просто предоставляй текстовые ответы`;
+
 const mcpClient = new Client({
     name: 'mongodb-gemini-chatbot',
     version: "1.0.0",
@@ -147,7 +136,7 @@ mcpClient.connect(new SSEClientTransport(new URL("http://localhost:3001/sse"))).
 async function askGemini() {
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash',
             contents: chatHistory,
             config: {
                 tools: [
@@ -286,7 +275,7 @@ async function startChat() {
 
         if (finalResponse) {
             console.log('\nAI:', finalResponse);
-            trimChatHistory();
+            // trimChatHistory();
         }
     }
 }
@@ -300,7 +289,6 @@ function trimChatHistory() {
     chatHistory = [...systemMessages];
     console.log('Chat history trimmed to only preserve system messages');
 }
-
 // function trimChatHistory() {
 //     let validEndIndex = chatHistory.length;
 //
@@ -331,3 +319,6 @@ function trimChatHistory() {
 
 // const remainingSpace = MAX_HISTORY_LENGTH - PRESERVE_SYSTEM_MESSAGES;
 // const startIndex = Math.max(PRESERVE_SYSTEM_MESSAGES, validEndIndex - remainingSpace);
+
+// equipment_id = 665ec91ac81eefbf37c8e1fd
+// license_plate_number = 668AT06
