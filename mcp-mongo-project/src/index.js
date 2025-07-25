@@ -5,6 +5,9 @@ import {z} from "zod";
 import MongoDBService from "./services/mongo-mcp-service.js";
 import { PostgresMcpService } from './services/postgres-mcp-service.js';
 
+
+const accessKey = process.env.ACCESS_KEY;
+
 const server = new McpServer({
     name: "example-server",
     version: "1.0.0"
@@ -575,36 +578,55 @@ server.tool(
 
 const transports = {};
 
+const sessionKeys = new Map();
+
+// Updated SSE endpoint
 app.get("/sse", async (req, res) => {
-    const transport = new SSEServerTransport('/messages', res);
-    transports[transport.sessionId] = transport;
-    res.on("close", () => {
-        delete transports[transport.sessionId];
-    });
-    await server.connect(transport);
+    const providedKey = req.query.authorization;
+
+
+    if (!providedKey || providedKey !== accessKey) {
+        return res.status(401).json({ error: 'Unauthorized: invalid access key' });
+    }
+    try {
+        const transport = new SSEServerTransport('/messages', res);
+
+        transports[transport.sessionId] = transport;
+
+        sessionKeys.set(transport.sessionId, providedKey);
+
+        res.on("close", () => {
+            delete transports[transport.sessionId];
+            sessionKeys.delete(transport.sessionId);
+        });
+
+        await server.connect(transport);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to establish SSE connection' });
+    }
 });
 
 app.post("/messages", async (req, res) => {
     const sessionId = req.query.sessionId;
+
+    const storedKey = sessionKeys.get(sessionId);
+
+    if (!storedKey || storedKey !== accessKey) {
+        return res.status(401).json({ error: 'Unauthorized: invalid session' });
+    }
+
     const transport = transports[sessionId];
     if (transport) {
-        await transport.handlePostMessage(req, res);
+        try {
+            await transport.handlePostMessage(req, res);
+        } catch (error) {
+            console.error('Error handling POST message:', error);
+            res.status(500).json({ error: 'Failed to handle message' });
+        }
     } else {
-        res.status(400).send('No transport found for sessionId');
+        console.log('No transport found for sessionId:', sessionId);
+        res.status(400).json({ error: 'No transport found for sessionId' });
     }
-});
-
-// Clean up MongoDB connection on server shutdown
-process.on('SIGINT', async () => {
-    try {
-        await mongoService.disconnect();
-        await postgresService.disconnect();
-        process.exit(0);
-    } catch (error) {
-        console.error('Error during shutdown:', error);
-        process.exit(1);
-    }
-
 });
 
 app.listen(3001, () => {

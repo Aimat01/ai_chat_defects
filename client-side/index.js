@@ -1,14 +1,31 @@
-import readlineSync from 'readline-sync';
 import {config} from 'dotenv';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {GoogleGenAI} from "@google/genai";
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import {Server} from 'socket.io';
+import {authorize} from './authMiddleware.js';
 
-// Load environment variables
+
 config();
 
-// Initialize the Google Generative AI with your API key
-const apiKey = process.env.GEMINI_API_KEY;
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+const PORT = process.env.PORT || 3000;
+const accessKey = process.env.ACCESS_KEY;
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: '*',
+        methods: ['GET', 'POST']
+    }
+});
+
+let apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
     console.error('Error: Gemini API key not found. Please add it to your .env file.');
@@ -18,145 +35,23 @@ if (!apiKey) {
 const ai = new GoogleGenAI({apiKey});
 
 let tools = [];
-let chatHistory = [];
 
-const SYSTEM_PROMPT = `Ты эксперт по анализу данных, работающий с PostgreSQL и MongoDB.  
-СТРУКТУРА ДАННЫХ  
-PostgreSQL — данные от GPS-трекеров:  
-Если информации недостаточно, используй pg_get_schema_info, pg_get_sample_data.  
-Основные таблицы:  
-- daily_stat — пробег, моточасы, топливо, одометр (по gps_id)  
-- vehicle_maintenance — затраты на обслуживание (по ved_license_plate_number и license_plate_number)  
-- warning_for_day, warning_for_month — предупреждения о переработке, перерасходе (по license_plate_number или gps_id)  
-- last_signals — последние сигналы техники (по gps_id)  
-MongoDB — информация о технике и документации:  
-Если описания коллекций недостаточно, используй listCollections, getCollectionSchema, getSampleData.  
-Основные коллекции:  
-- equipments — техника (поиск по license_plate_number, _id, gps_id, workspace_id)  
-- defects — поломки, неисправности (по equipment_id)  
-- tickets — заявки на ремонт (по equipment_id)  
-- brand, models — марка и модель техники  
-- users, employees — сотрудники и пользователи  
-В equipments могут быть транспорт, машины, оборудование и другие типы техники.  
-КЛАССИФИКАЦИЯ ЗАПРОСОВ (ОБЯЗАТЕЛЬНЫЙ ПЕРВЫЙ ШАГ)  
-Перед выполнением любого запроса строго определи его тип по ключевым словам и контексту:  
-- Дефекты: поломка, неисправность, не работает, сломано, ремонт, замена  
-- Эксплуатация: пробег, моточасы, одометр, топливо, расход  
-- Обслуживание: затраты, сервис, техническое обслуживание, ТО, масло  
-- Характеристики: модель, марка, VIN, номер паспорта, документ, грузоподъёмность, масса  
-- Нормы: переработка, предупреждение, превышение, перегрузка, норма, нормальное  
-- Заявки: тикет, обращение, заявка, заказ-наряд  
-СТРОГИЙ АЛГОРИТМ  
-1. Классифицируй запрос по ключевым словам и контексту. Если запрос содержит слова из нескольких категорий, выбери наиболее подходящую по основному объекту запроса.  
-2. Определи, требуется ли информация о технике (например, license_plate_number, gps_id, _id, vin). Если да, начни с коллекции equipments для получения идентификаторов (_id, gps_id).  
-3. Выбери источник данных на основе типа запроса:  
-   - Эксплуатация: PostgreSQL (daily_stat, last_signals)  
-   - Дефекты: MongoDB (defects)  
-   - Обслуживание: PostgreSQL (vehicle_maintenance)  
-   - Характеристики: MongoDB (equipments, brand, models)  
-   - Нормы: PostgreSQL (warning_for_day, warning_for_month) + MongoDB (equipments для нормативов)  
-   - Заявки: MongoDB (tickets)  
-4. Выполни запрос:  
-   - Для PostgreSQL: используй SQL-запросы к соответствующим таблицам.  
-   - Для MongoDB: используй find, aggregate или другие методы для получения данных.  
-5. Если данные не найдены:  
-   - Используй pg_get_schema_info или getCollectionSchema для проверки доступных полей.  
-   - Используй pg_get_sample_data или getSampleData для анализа примеров данных.  
-   - Построй агрегирующий запрос для уточнения.  
-6. Для запросов типа "нормальное ли" (например, потребление топлива):  
-   - Сравни фактические данные (например, из daily_stat) с нормативами (из equipments или других коллекций).  
-   - Если нормативы отсутствуют, проверь warning_for_day/warning_for_month на наличие предупреждений.  
-7. Верни только запрошенную информацию, без технических деталей (имён таблиц, коллекций, схем).  
-ЕСЛИ ТИП НЕ ОПРЕДЕЛЁН ТОЧНО  
-Если запрос не подпадает под чёткие категории, но содержит данные о технике (license_plate_number, gps_id, _id, vin):  
-- Получи данные из equipments.  
-- Получи список всех коллекций MongoDB и таблиц PostgreSQL.  
-- Выбери возможные источники данных.  
-- Получи схему и примеры данных.  
-- Построй корректные агрегирующие запросы.  
-Если нужный ответ не найден с первого запроса — продолжай искать, используя все доступные источники.  
-ПОВЕДЕНИЕ ПО УМОЛЧАНИЮ  
-- Не раскрывай пользователю структуру БД.  
-- Не показывай технические детали (имена таблиц, коллекций, схемы).  
-- Проверяй наличие доступа к workspace_id.  
-- Не добавляй лишнюю информацию — только то, что нужно пользователю.  
-- Если запрос связан с "нормальностью", всегда сравнивай фактические данные с нормативами или проверяй предупреждения.`;
+const chatSessions = new Map();
+
+const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
+
+let workspaceID = ""
 
 const mcpClient = new Client({
     name: 'mongodb-gemini-chatbot',
     version: "1.0.0",
 });
 
-// Try to connect to the MCP server with better error handling
-mcpClient.connect(new SSEClientTransport(new URL("http://localhost:3001/sse"))).then(async () => {
-    console.log('Connected to MCP server');
-    // Transform tools to match Gemini's expected format
-    const toolsList = await mcpClient.listTools();
-    tools = toolsList.tools.map(tool => {
-        // Create a clean version of properties without additionalProperties and default
-        const cleanProperties = {};
-
-        for (const [key, value] of Object.entries(tool.inputSchema.properties || {})) {
-            cleanProperties[key] = {
-                description: value.description || '',
-                type: value.type || 'string'
-            };
-
-            // Handle nested properties
-            if (value.properties) {
-                const nestedProperties = {};
-                for (const [nestedKey, nestedValue] of Object.entries(value.properties)) {
-                    nestedProperties[nestedKey] = {
-                        description: nestedValue.description || '',
-                        type: nestedValue.type || 'string'
-                    };
-                }
-                cleanProperties[key].properties = nestedProperties;
-            }
-
-            // Handle items for arrays
-            if (value.items) {
-                cleanProperties[key].items = {
-                    type: value.items.type || 'string'
-                };
-            }
-        }
-
-        return {
-            name: tool.name,
-            description: tool.description,
-            parameters: {
-                type: tool.inputSchema.type,
-                properties: cleanProperties,
-                required: tool.inputSchema.required || []
-            }
-        };
-    });
-
-    console.log('Available tools:',
-        tools.map(tool => tool.name).join(', ')
-    );
-
-    chatHistory.push({role: 'user', parts: [{text: SYSTEM_PROMPT}]});
-    chatHistory.push({
-        role: 'model',
-        parts: [{text: 'Understood! I will properly use query filters for searching related data in MongoDB and gather all necessary information to provide comprehensive answers.'}]
-    });
-
-    startChat().catch(error => {
-        console.error('Fatal error:', error);
-        process.exit(1);
-    });
-}).catch((error) => {
-    console.error('Error connecting to MCP server:', error.message);
-    process.exit(1);
-});
-
-// Function to send a message to Gemini API and get a response
-async function askGemini() {
+async function askGemini(sessionId) {
     try {
+        const chatHistory = chatSessions.get(sessionId);
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash',
             contents: chatHistory,
             config: {
                 tools: [
@@ -169,13 +64,11 @@ async function askGemini() {
         const content = response.candidates[0].content;
         const parts = content.parts;
 
-        // Check if there's a function call
         const functionCallPart = parts.find(part => part.functionCall);
 
         if (functionCallPart) {
             const functionCall = functionCallPart.functionCall;
-            console.log('🔧 Tool used:', functionCall.name);
-            console.log('📝 Parameters:', JSON.stringify(functionCall.args, null, 2));
+            console.log(`🔧 Session ${sessionId} - Tool used:`, functionCall.name);
 
             const toolResponse = await mcpClient.callTool({
                 name: functionCall.name,
@@ -195,7 +88,6 @@ async function askGemini() {
             };
         }
 
-        // If no function call, return text response
         const textPart = parts.find(part => part.text);
         if (textPart) {
             return {
@@ -209,7 +101,29 @@ async function askGemini() {
             text: 'No response received from AI'
         };
     } catch (error) {
-        console.error('Error communicating with Gemini API:', error);
+        if (error.message.statusCode === 503 && error.message.includes('overloaded')) {
+            return {
+                type: 'error',
+                text: 'Gemini API is currently overloaded. Please try again later.'
+            };
+        }
+        if (error.message.includes('exceeded')) {
+            switch (apiKey) {
+                case process.env.GEMINI_API_KEY:
+                    apiKey = process.env.GEMINI_API_KEY_1;
+                    break
+                case process.env.GEMINI_API_KEY_1:
+                    apiKey = process.env.GEMINI_API_KEY_2;
+                    break
+                case process.env.GEMINI_API_KEY_2:
+                    apiKey = process.env.GEMINI_API_KEY_1;
+            }
+            return {
+                type: 'error',
+                text: 'Something went wrong with limits try again please'
+            };
+
+        }
         return {
             type: 'error',
             text: 'Sorry, I encountered an error while processing your request.'
@@ -217,129 +131,318 @@ async function askGemini() {
     }
 }
 
-// Main chat loop
-async function startChat() {
-    console.log('\n===================================');
-    console.log('🤖 Terminal Chatbot with Gemini AI');
-    console.log('===================================');
-    console.log('Type "exit" or "quit" to end the conversation.\n');
+// CLIENT - Updated connection logic
+mcpClient.connect(new SSEClientTransport(new URL(`http://localhost:3001/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
+    console.log('Connected to MCP server');
 
-    while (true) {
-        let userInput = readlineSync.question('\nYou: ');
-        userInput += " {workspace_id: '6658100482bdfc1c969c7455'}";
+    try {
+        const toolsList = await mcpClient.listTools();
+        tools = toolsList.tools.map(tool => {
+            const cleanProperties = {};
 
-        // Add user input to the chat history
+            for (const [key, value] of Object.entries(tool.inputSchema.properties || {})) {
+                cleanProperties[key] = {
+                    description: value.description || '',
+                    type: value.type || 'string'
+                };
+
+                if (value.properties) {
+                    const nestedProperties = {};
+                    for (const [nestedKey, nestedValue] of Object.entries(value.properties)) {
+                        nestedProperties[nestedKey] = {
+                            description: nestedValue.description || '',
+                            type: nestedValue.type || 'string'
+                        };
+                    }
+                    cleanProperties[key].properties = nestedProperties;
+                }
+
+                if (value.items) {
+                    cleanProperties[key].items = {
+                        type: value.items.type || 'string'
+                    };
+                }
+            }
+
+            return {
+                name: tool.name,
+                description: tool.description,
+                parameters: {
+                    type: tool.inputSchema.type,
+                    properties: cleanProperties,
+                    required: tool.inputSchema.required || []
+                }
+            };
+        });
+
+        console.log('Available tools:', tools.map(tool => tool.name).join(', '));
+
+        server.listen(PORT, () => {
+            console.log(`HTTP server running at http://localhost:${PORT}`);
+        });
+    } catch (error) {
+        console.error('Error after MCP connection:', error);
+        process.exit(1);
+    }
+}).catch((error) => {
+    console.error('Error connecting to MCP server:', error.message);
+
+    if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+    }
+
+    process.exit(1);
+});
+
+const workspaceMap = new Map();
+
+io.use(async (socket, next) => {
+    const accessToken = socket.handshake.headers['authorization'];
+    const workspace = socket.handshake.headers['workspace'];
+    try {
+        await authorize(accessToken, workspaceID);
+        workspaceMap.set(socket.id, workspace);
+        next();
+    } catch (err) {
+        next(new Error('Unauthorized'));
+    }
+});
+io.on('connection', (socket) => {
+
+    const sessionId = socket.id;
+    const initialChatHistory = [
+        {role: 'user', parts: [{text: SYSTEM_PROMPT}]},
+        {
+            role: 'model',
+            parts: [{text: 'Understood! I will properly use query filters for searching related data in MongoDB and gather all necessary information to provide comprehensive answers.'}]
+        }
+    ];
+
+    chatSessions.set(sessionId, initialChatHistory);
+
+    socket.emit('session_created', {sessionId});
+
+    socket.on('chat_message', async (message) => {
+        if (!message) {
+            socket.emit('error', {error: 'Message is required'});
+            return;
+        }
+        const workspace = workspaceMap.get(sessionId) || '';
+        if (!workspace) {
+            socket.emit('error', {error: 'Workspace ID is required'});
+            return;
+        }
+        const userInput = message + ` {workspace_id: '${workspace}'}`;
+        const chatHistory = chatSessions.get(sessionId);
+
         chatHistory.push({role: 'user', parts: [{text: userInput}]});
 
-        // Check if user wants to exit
-        if (['exit', 'quit'].includes(userInput.toLowerCase())) {
-            console.log('\nGoodbye! 👋');
-            break;
-        }
-
-        console.log('\nAI is thinking...');
-
-        // Iterative tool calling pipeline
         let finalResponse = '';
         let iterationCount = 0;
         const maxIterations = 15;
 
-        while (iterationCount < maxIterations) {
-            iterationCount++;
+        try {
+            while (iterationCount < maxIterations) {
+                iterationCount++;
 
-            const aiResponse = await askGemini();
+                const aiResponse = await askGemini(sessionId);
 
-            if (aiResponse.type === 'error') {
-                finalResponse = aiResponse.text;
-                break;
+                if (aiResponse.type === 'error') {
+                    finalResponse = aiResponse.text;
+                    break;
+                }
+
+                if (aiResponse.type === 'text') {
+                    finalResponse = aiResponse.text;
+                    chatHistory.push({role: 'model', parts: [{text: aiResponse.text}]});
+                    break;
+                }
+
+                if (aiResponse.type === 'tool_call') {
+                    socket.emit('tool_call', {
+                        tool: aiResponse.toolName,
+                        args: aiResponse.toolArgs
+                    });
+
+                    chatHistory.push({
+                        role: 'model',
+                        parts: [{
+                            functionCall: {
+                                name: aiResponse.toolName,
+                                args: aiResponse.toolArgs
+                            }
+                        }]
+                    });
+
+                    chatHistory.push({
+                        role: 'user',
+                        parts: [{
+                            functionResponse: {
+                                name: aiResponse.toolName,
+                                response: {result: aiResponse.toolResult}
+                            }
+                        }]
+                    });
+
+                    continue;
+                }
             }
 
-            if (aiResponse.type === 'text') {
-                // AI provided the final text response
-                finalResponse = aiResponse.text;
-                chatHistory.push({role: 'model', parts: [{text: aiResponse.text}]});
-                break;
+            if (iterationCount >= maxIterations) {
+                finalResponse = "Извините, запрос слишком сложный попробуйте переформулировать его или уточнить детали.";
             }
 
-            if (aiResponse.type === 'tool_call') {
-                // Add tool call message (model makes function call)
-                chatHistory.push({
-                    role: 'model',
-                    parts: [{
-                        functionCall: {
-                            name: aiResponse.toolName,
-                            args: aiResponse.toolArgs
-                        }
-                    }]
-                });
-
-                // Add tool response message (user/function provides response)
-                chatHistory.push({
-                    role: 'user',
-                    parts: [{
-                        functionResponse: {
-                            name: aiResponse.toolName,
-                            response: {result: aiResponse.toolResult}
-                        }
-                    }]
-                });
-
-                // Continue the loop to get the next response
-                continue;
+            if (chatHistory.length > 5) {
+                const systemMessages = chatHistory.slice(0, 2);
+                const recentMessages = chatHistory.slice(-3);
+                chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
             }
+
+            function countTokens(chatHistory) {
+                return chatHistory.reduce((sum, msg) => {
+                    const text = msg.parts?.[0]?.text || '';
+                    return sum + text.split(/\s+/).length;
+                }, 0);
+            }
+
+            const MAX_TOKENS = 262144;
+
+            if (countTokens(chatHistory) > MAX_TOKENS) {
+                const systemMessages = chatHistory.slice(0, 2);
+                let tokens = countTokens(systemMessages);
+                const recentMessages = [];
+                for (let i = chatHistory.length - 1; i >= 2; i--) {
+                    const msg = chatHistory[i];
+                    const msgTokens = countTokens([msg]);
+                    if (tokens + msgTokens > MAX_TOKENS) break;
+                    recentMessages.unshift(msg);
+                    tokens += msgTokens;
+                }
+                chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
+            }
+            socket.emit('chat_response', {response: finalResponse});
+
+        } catch (error) {
+            socket.emit('error', {error: 'Internal server error'});
         }
+    });
 
-        if (iterationCount >= maxIterations) {
-            finalResponse = "I've reached the maximum number of tool calls. Let me provide you with what I've found so far.";
+    socket.on('disconnect', () => {
+        if (chatSessions.has(sessionId)) {
+            chatSessions.delete(sessionId);
         }
+    });
+});
 
-        if (finalResponse) {
-            console.log('\nAI:', finalResponse);
-            // trimChatHistory();
-        }
-    }
-}
-
-// const MAX_HISTORY_LENGTH = 25;
-const PRESERVE_SYSTEM_MESSAGES = 2;
-
-
-function trimChatHistory() {
-    const systemMessages = chatHistory.slice(0, PRESERVE_SYSTEM_MESSAGES);
-    chatHistory = [...systemMessages];
-    console.log('Chat history trimmed to only preserve system messages');
-}
-
-// function trimChatHistory() {
-//     let validEndIndex = chatHistory.length;
-//
-//     for (let i = chatHistory.length - 1; i >= 0; i--) {
-//         const message = chatHistory[i];
-//
-//         if (message.role === 'model' &&
-//             message.parts.some(part => part.functionCall)) {
-//
-//             const nextMessage = chatHistory[i + 1];
-//             if (!nextMessage ||
-//                 nextMessage.role !== 'user' ||
-//                 !nextMessage.parts.some(part => part.functionResponse)) {
-//                 validEndIndex = i;
-//                 break;
-//             }
+// app.post('/init-session', (req, res) => {
+//     const sessionId = Date.now().toString();
+//     const initialChatHistory = [
+//         {role: 'user', parts: [{text: SYSTEM_PROMPT}]},
+//         {
+//             role: 'model',
+//             parts: [{text: 'Understood! I will properly use query filters for searching related data in MongoDB and gather all necessary information to provide comprehensive answers.'}]
 //         }
+//     ];
+//
+//     chatSessions.set(sessionId, initialChatHistory);
+//     res.json({ sessionId });
+// });
+//
+// app.post('/chat', async (req, res) => {
+//     const { sessionId, message } = req.body;
+//
+//     if (!sessionId || !chatSessions.has(sessionId)) {
+//         return res.status(400).json({ error: 'Invalid session ID' });
 //     }
 //
-//     const systemMessages = chatHistory.slice(0, PRESERVE_SYSTEM_MESSAGES);
+//     if (!message) {
+//         return res.status(400).json({ error: 'Message is required' });
+//     }
 //
-//     const recentMessages = chatHistory.slice(PRESERVE_SYSTEM_MESSAGES, validEndIndex);
+//     const userInput = message + " {workspace_id: '6658100482bdfc1c969c7455'}";
+//     const chatHistory = chatSessions.get(sessionId);
 //
-//     chatHistory = [...systemMessages, ...recentMessages];
-//     console.log('Chat history trimmed to prevent overflow');
+//     chatHistory.push({role: 'user', parts: [{text: userInput}]});
 //
-// }
-
-// const remainingSpace = MAX_HISTORY_LENGTH - PRESERVE_SYSTEM_MESSAGES;
-// const startIndex = Math.max(PRESERVE_SYSTEM_MESSAGES, validEndIndex - remainingSpace);
-
-// equipment_id = 665ec91ac81eefbf37c8e1fd
-// license_plate_number = 668AT06
+//     let finalResponse = '';
+//     let iterationCount = 0;
+//     const maxIterations = 15;
+//
+//     try {
+//         while (iterationCount < maxIterations) {
+//             iterationCount++;
+//
+//             const aiResponse = await askGemini(sessionId);
+//
+//             if (aiResponse.type === 'error') {
+//                 finalResponse = aiResponse.text;
+//                 break;
+//             }
+//
+//             if (aiResponse.type === 'text') {
+//                 // AI предоставил окончательный текстовый ответ
+//                 finalResponse = aiResponse.text;
+//                 chatHistory.push({role: 'model', parts: [{text: aiResponse.text}]});
+//                 break;
+//             }
+//
+//             if (aiResponse.type === 'tool_call') {
+//                 // Добавляем сообщение о вызове инструмента
+//                 chatHistory.push({
+//                     role: 'model',
+//                     parts: [{
+//                         functionCall: {
+//                             name: aiResponse.toolName,
+//                             args: aiResponse.toolArgs
+//                         }
+//                     }]
+//                 });
+//
+//                 // Добавляем ответное сообщение инструмента
+//                 chatHistory.push({
+//                     role: 'user',
+//                     parts: [{
+//                         functionResponse: {
+//                             name: aiResponse.toolName,
+//                             response: {result: aiResponse.toolResult}
+//                         }
+//                     }]
+//                 });
+//
+//                 // Продолжаем цикл, чтобы получить следующий ответ
+//                 continue;
+//             }
+//         }
+//
+//         if (iterationCount >= maxIterations) {
+//             finalResponse = "I've reached the maximum number of tool calls. Let me provide you with what I've found so far.";
+//         }
+//
+//         // Обрезаем историю чата, если она становится слишком длинной
+//         if (chatHistory.length > 30) {
+//             // Сохраняем первые системные сообщения
+//             const systemMessages = chatHistory.slice(0, 2);
+//             // Сохраняем последние N сообщений
+//             const recentMessages = chatHistory.slice(-28);
+//             chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
+//         }
+//
+//         res.json({ response: finalResponse });
+//     } catch (error) {
+//         console.error('Error processing chat request:', error);
+//         res.status(500).json({ error: 'Internal server error' });
+//     }
+// });
+//
+// // Эндпоинт для очистки сессии
+// app.post('/clear-session', (req, res) => {
+//     const { sessionId } = req.body;
+//
+//     if (!sessionId || !chatSessions.has(sessionId)) {
+//         return res.status(400).json({ error: 'Invalid session ID' });
+//     }
+//
+//     chatSessions.delete(sessionId);
+//     res.json({ success: true });
+// });
