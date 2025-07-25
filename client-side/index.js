@@ -40,7 +40,6 @@ const chatSessions = new Map();
 
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
-let workspaceID = ""
 
 const mcpClient = new Client({
     name: 'mongodb-gemini-chatbot',
@@ -69,6 +68,7 @@ async function askGemini(sessionId) {
         if (functionCallPart) {
             const functionCall = functionCallPart.functionCall;
             console.log(`🔧 Session ${sessionId} - Tool used:`, functionCall.name);
+            console.log(`🔧 Session ${sessionId} - Tool arguments:`, functionCall.args);
 
             const toolResponse = await mcpClient.callTool({
                 name: functionCall.name,
@@ -200,8 +200,9 @@ const workspaceMap = new Map();
 io.use(async (socket, next) => {
     const accessToken = socket.handshake.headers['authorization'];
     const workspace = socket.handshake.headers['workspace'];
+    //TODO: add today date for ai request
     try {
-        await authorize(accessToken, workspaceID);
+        await authorize(accessToken, workspace);
         workspaceMap.set(socket.id, workspace);
         next();
     } catch (err) {
@@ -229,11 +230,15 @@ io.on('connection', (socket) => {
             return;
         }
         const workspace = workspaceMap.get(sessionId) || '';
+        console.log(workspace);
+        console.log(sessionId)
+        console.log(workspaceMap);
         if (!workspace) {
             socket.emit('error', {error: 'Workspace ID is required'});
             return;
         }
-        const userInput = message + ` {workspace_id: '${workspace}'}`;
+        const userInput =  message.userMessage + ` {workspace_id: '${workspace}'}`;
+        console.log(userInput);
         const chatHistory = chatSessions.get(sessionId);
 
         chatHistory.push({role: 'user', parts: [{text: userInput}]});
@@ -247,7 +252,6 @@ io.on('connection', (socket) => {
                 iterationCount++;
 
                 const aiResponse = await askGemini(sessionId);
-
                 if (aiResponse.type === 'error') {
                     finalResponse = aiResponse.text;
                     break;
@@ -285,7 +289,6 @@ io.on('connection', (socket) => {
                         }]
                     });
 
-                    continue;
                 }
             }
 
@@ -446,3 +449,24 @@ io.on('connection', (socket) => {
 //     chatSessions.delete(sessionId);
 //     res.json({ success: true });
 // });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// сколько у меня техник
+// сколько дефектов у техники с номером 023WS02
+// сколько дефектов у техники с номером 320AU07
+// которая из моих техник ломается чаще всего
+// какая модель у техники с номером 023WS02
+// какой бренд у техники с номером 023WS02
+// какой бренд у техники с номером 023WS02
