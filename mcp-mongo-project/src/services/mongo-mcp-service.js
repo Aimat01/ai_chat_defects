@@ -270,7 +270,7 @@ class MongoDBService {
 
         return structure;
     }
-
+    // TODO: добавить в обший список тулов
     // Find a relationship between two specific collections
     async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 5) {
         if (!schema1 || !schema2) return null;
