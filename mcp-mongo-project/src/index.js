@@ -348,6 +348,44 @@ server.tool(
     }
 );
 
+server.tool(
+    "findRelationshipsBetweenCollections",
+    "Анализирует две коллекции MongoDB и определяет возможные связи между ними, такие как внешние ключи.",
+    {
+        collection1: z.string().describe("Название первой коллекции для анализа"),
+        collection2: z.string().describe("Название второй коллекции для анализа"),
+        schema1: z.record(z.any()).describe("Схема первой коллекции"),
+        schema2: z.record(z.any()).describe("Схема второй коллекции"),
+        sampleSize: z.number().optional().default(5).describe("Количество документов для выборки при проверке связей")
+    },
+    async (args) => {
+        try {
+            const { collection1, collection2, schema1, schema2, sampleSize } = args;
+            const result = await mongoService.findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize);
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: result
+                            ? `Найдены связи между коллекциями '${collection1}' и '${collection2}':\n${JSON.stringify(result, null, 2)}`
+                            : `Связи между коллекциями '${collection1}' и '${collection2}' не найдены.`
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Ошибка анализа связей: ${error.message}`
+                    }
+                ]
+            };
+        }
+    }
+);
+
 // POSTGRES MCP TOOLS
 // Execute Query Tool (SELECT operations)
 server.tool(

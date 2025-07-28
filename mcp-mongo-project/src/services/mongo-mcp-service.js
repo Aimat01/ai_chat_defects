@@ -270,7 +270,6 @@ class MongoDBService {
 
         return structure;
     }
-    // TODO: добавить в обший список тулов
     // Find a relationship between two specific collections
     async findRelationshipBetweenCollections(collection1, collection2, schema1, schema2, sampleSize = 5) {
         if (!schema1 || !schema2) return null;
@@ -386,77 +385,6 @@ class MongoDBService {
             console.error(`Error verifying relationship: ${error.message}`);
             return {isValid: false, strength: 0, matches: 0};
         }
-    }
-
-    // Generate summary of relationships
-    generateRelationshipSummary(relationships) {
-        const summary = {
-            totalRelationships: relationships.length,
-            strongRelationships: 0,
-            weakRelationships: 0,
-            collectionGroups: []
-        };
-
-        const strongThreshold = 0.5;
-        const collectionConnections = {};
-
-        relationships.forEach(rel => {
-            rel.relationships.forEach(r => {
-                if (r.strength >= strongThreshold) {
-                    summary.strongRelationships++;
-                } else {
-                    summary.weakRelationships++;
-                }
-
-                // Track connections for grouping
-                if (!collectionConnections[r.from]) {
-                    collectionConnections[r.from] = new Set();
-                }
-                if (!collectionConnections[r.to]) {
-                    collectionConnections[r.to] = new Set();
-                }
-
-                collectionConnections[r.from].add(r.to);
-                collectionConnections[r.to].add(r.from);
-            });
-        });
-
-        // Find connected groups
-        const visited = new Set();
-        Object.keys(collectionConnections).forEach(collection => {
-            if (!visited.has(collection)) {
-                const group = this.findConnectedGroup(collection, collectionConnections, visited);
-                if (group.length > 1) {
-                    summary.collectionGroups.push(group);
-                }
-            }
-        });
-
-        return summary;
-    }
-
-    // Find connected group of collections
-    findConnectedGroup(startCollection, connections, visited) {
-        const group = [];
-        const queue = [startCollection];
-
-        while (queue.length > 0) {
-            const current = queue.shift();
-            if (visited.has(current)) continue;
-
-            visited.add(current);
-            group.push(current);
-
-            if (connections[current]) {
-                connections[current].forEach(connected => {
-                    if (!visited.has(connected)) {
-                        queue.push(connected);
-                    }
-                });
-            }
-        }
-
-        return group;
     }
 
     // Helper method to convert string IDs to ObjectId

@@ -116,7 +116,7 @@ async function askGemini(sessionId) {
                     apiKey = process.env.GEMINI_API_KEY_2;
                     break
                 case process.env.GEMINI_API_KEY_2:
-                    apiKey = process.env.GEMINI_API_KEY_1;
+                    apiKey = process.env.GEMINI_API_KEY;
             }
             return {
                 type: 'error',
@@ -200,7 +200,6 @@ const workspaceMap = new Map();
 io.use(async (socket, next) => {
     const accessToken = socket.handshake.headers['authorization'];
     const workspace = socket.handshake.headers['workspace'];
-    //TODO: add today date for ai request
     try {
         await authorize(accessToken, workspace);
         workspaceMap.set(socket.id, workspace);
@@ -230,15 +229,11 @@ io.on('connection', (socket) => {
             return;
         }
         const workspace = workspaceMap.get(sessionId) || '';
-        console.log(workspace);
-        console.log(sessionId)
-        console.log(workspaceMap);
         if (!workspace) {
             socket.emit('error', {error: 'Workspace ID is required'});
             return;
         }
-        const userInput =  message.userMessage + ` {workspace_id: '${workspace}'}`;
-        console.log(userInput);
+        const userInput =  message.userMessage + ` {workspace_id: '${workspace}', date: '${new Date().toISOString()}'}`;
         const chatHistory = chatSessions.get(sessionId);
 
         chatHistory.push({role: 'user', parts: [{text: userInput}]});
