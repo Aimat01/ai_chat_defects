@@ -9,32 +9,8 @@ export class PostgresMcpService {
         this.db = DatabaseConnection.getInstance();
     }
 
-    getConnectionString(connectionString) {
-        if (connectionString) {
-            return connectionString;
-        }
-
-        const envConnectionString = process.env.POSTGRES_URL;
-        if (envConnectionString) {
-            return envConnectionString;
-        }
-
-        // Build connection string from individual env variables
-        const host = process.env.POSTGRES_HOST || 'localhost';
-        const port = process.env.POSTGRES_PORT || '5432';
-        const database = process.env.POSTGRES_DB;
-        const username = process.env.POSTGRES_USER;
-        const password = process.env.POSTGRES_PASSWORD;
-
-        if (!database || !username || !password) {
-            throw new Error('PostgreSQL connection parameters are not defined');
-        }
-
-        return `postgresql://${username}:${password}@${host}:${port}/${database}`;
-    }
-
     async connect(connectionString) {
-        const resolvedConnectionString = this.getConnectionString(connectionString);
+        const resolvedConnectionString = process.env.POSTGRES_URL
         await this.db.connect(resolvedConnectionString);
     }
 
