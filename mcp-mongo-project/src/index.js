@@ -9,7 +9,7 @@ import { PostgresMcpService } from './services/postgres-mcp-service.js';
 const accessKey = process.env.ACCESS_KEY;
 
 const server = new McpServer({
-    name: "example-server",
+    name: "mongo-postgres-mcp-server",
     version: "1.0.0"
 });
 
