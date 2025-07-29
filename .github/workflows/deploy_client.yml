@@ -45,7 +45,7 @@ jobs:
               --name mcpmongo-client \
               -p 3000:3000 \
               -e SERVER_URL="http://localhost:3001" \
-              -e MONGO_URI="${{ secrets.MONGO_URI }}" \
+              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
               -e MONGODB_NAME="${{ secrets.MONGODB_NAME }}" \
               -e ACCESS_KEY="${{ secrets.ACCESS_KEY }}" \
               -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \

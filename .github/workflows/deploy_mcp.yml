@@ -45,7 +45,7 @@ jobs:
               --name mcpmongo-server \
               -p 3001:3001 \
               -e ACCESS_KEY="${{ secrets.ACCESS_KEY }}" \
-              -e MONGO_URI="${{ secrets.MONGO_URI }}" \
+              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
               -e MONGODB_NAME="${{ secrets.MONGODB_NAME }}" \
               -e POSTGRES_URI="${{ secrets.POSTGRES_URI }}" \
               --restart unless-stopped \
