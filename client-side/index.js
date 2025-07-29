@@ -13,7 +13,6 @@ config();
 
 const app = express();
 app.use(express.json());
-app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 const accessKey = process.env.ACCESS_KEY;
