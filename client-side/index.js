@@ -1,12 +1,11 @@
 import {config} from 'dotenv';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
-import {GoogleGenAI} from "@google/genai";
 import express from 'express';
 import http from 'http';
 import {Server} from 'socket.io';
 import {authorize} from './authMiddleware.js';
-
+import fetch from 'node-fetch';
 
 config();
 
@@ -26,14 +25,13 @@ const io = new Server(server, {
     transports: ['websocket', 'polling']
 });
 
-let apiKey = process.env.GEMINI_API_KEY;
+// Ключи API для OpenRouter
+const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 
-if (!apiKey) {
-    console.error('Error: Gemini API key not found. Please add it to your .env file.');
+if (!openRouterApiKey) {
+    console.error('Error: OpenRouter API key not found. Please add it to your .env file.');
     process.exit(1);
 }
-
-const ai = new GoogleGenAI({apiKey});
 
 let tools = [];
 
@@ -108,39 +106,144 @@ MongoDB — информация о технике и документации:
 - Не спрашивай у пользователя, в какой коллекции искать данные — используй контекст запроса. Не говори что ты не смог найти данные в какой то коллкции или таблице
 ИСОПЛЬЗУЙ mongo-postgres-mcp-server для выполнения запросов к базе данных.`
 
-
 const mcpClient = new Client({
-    name: 'mongodb-gemini-chatbot',
+    name: 'mongodb-qwen-chatbot',
     version: "1.0.0",
 });
 
-async function askGemini(sessionId) {
+async function askQwen(sessionId) {
     try {
         const chatHistory = chatSessions.get(sessionId);
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: chatHistory,
-            config: {
-                tools: [
-                    {
-                        functionDeclarations: tools,
-                    }
-                ]
+
+        // Преобразование истории чата в формат OpenRouter
+        const messages = chatHistory.map(msg => {
+            if (msg.role === 'user' && msg.parts[0].text) {
+                return {
+                    role: 'user',
+                    content: msg.parts[0].text
+                };
+            } else if (msg.role === 'model' && msg.parts[0].text) {
+                return {
+                    role: 'assistant',
+                    content: msg.parts[0].text
+                };
+            } else if (msg.role === 'model' && msg.parts[0].functionCall) {
+                return {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                        type: 'function',
+                        function: {
+                            name: msg.parts[0].functionCall.name,
+                            arguments: JSON.stringify(msg.parts[0].functionCall.args)
+                        }
+                    }]
+                };
+            } else if (msg.role === 'user' && msg.parts[0].functionResponse) {
+                return {
+                    role: 'tool',
+                    tool_call_id: 'call_' + Math.random().toString(36).substring(2, 15),
+                    name: msg.parts[0].functionResponse.name,
+                    content: JSON.stringify(msg.parts[0].functionResponse.response)
+                };
             }
+            return null;
+        }).filter(Boolean);
+
+        // Формат инструментов согласно документации OpenRouter
+        const functions = tools.map(tool => {
+            return {
+                type: "function",
+                function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters
+                }
+            };
         });
-        const content = response.candidates[0].content;
-        const parts = content.parts;
 
-        const functionCallPart = parts.find(part => part.functionCall);
+        // Запрос к OpenRouter API
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${openRouterApiKey}`,
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'MongoDB-Qwen-Chatbot'
+            },
+            body: JSON.stringify({
+                model: 'qwen/qwen3-coder:free',
+                messages: messages,
+                tools: functions.length > 0 ? functions : undefined,
+                tool_choice: functions.length > 0 ? "auto" : undefined,
+                temperature: 0.7,
+                max_tokens: 2048
+            })
+        });
 
-        if (functionCallPart) {
-            const functionCall = functionCallPart.functionCall;
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`API error: ${response.status} - ${JSON.stringify(errorData)}`);
+        }
+
+        const responseData = await response.json();
+        console.log('OpenRouter response:', JSON.stringify(responseData, null, 2));
+
+        // Проверка структуры ответа
+        if (!responseData || !responseData.choices || !responseData.choices.length) {
+            console.error('Invalid response structure:', responseData);
+            return {
+                type: 'error',
+                text: 'Получен некорректный ответ от API'
+            };
+        }
+
+        const assistantMessage = responseData.choices[0].message;
+
+        if (!assistantMessage) {
+            console.error('No message in response:', responseData.choices[0]);
+            return {
+                type: 'error',
+                text: 'Сообщение не найдено в ответе API'
+            };
+        }
+
+        // Проверяем наличие tool_calls (новый формат API)
+        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+            // Берем первый вызов инструмента
+            const toolCall = assistantMessage.tool_calls[0].function;
+            console.log(`🔧 Session ${sessionId} - Tool used:`, toolCall.name);
+            console.log(`🔧 Session ${sessionId} - Tool arguments:`, toolCall.arguments);
+
+            const args = JSON.parse(toolCall.arguments);
+
+            const toolResponse = await mcpClient.callTool({
+                name: toolCall.name,
+                arguments: args
+            });
+
+            let toolResult = "No content received from tool";
+            if (toolResponse.content && toolResponse.content.length > 0) {
+                toolResult = toolResponse.content[0].text;
+            }
+
+            return {
+                type: 'tool_call',
+                toolName: toolCall.name,
+                toolArgs: args,
+                toolResult: toolResult
+            };
+        } else if (assistantMessage.function_call) {
+            // Старый формат - оставляем для совместимости
+            const functionCall = assistantMessage.function_call;
             console.log(`🔧 Session ${sessionId} - Tool used:`, functionCall.name);
-            console.log(`🔧 Session ${sessionId} - Tool arguments:`, functionCall.args);
+            console.log(`🔧 Session ${sessionId} - Tool arguments:`, functionCall.arguments);
+
+            const args = JSON.parse(functionCall.arguments);
 
             const toolResponse = await mcpClient.callTool({
                 name: functionCall.name,
-                arguments: functionCall.args
+                arguments: args
             });
 
             let toolResult = "No content received from tool";
@@ -151,58 +254,41 @@ async function askGemini(sessionId) {
             return {
                 type: 'tool_call',
                 toolName: functionCall.name,
-                toolArgs: functionCall.args,
+                toolArgs: args,
                 toolResult: toolResult
             };
-        }
-
-        const textPart = parts.find(part => part.text);
-        if (textPart) {
+        } else if (assistantMessage.content) {
+            // Обработка текстового ответа
             return {
                 type: 'text',
-                text: textPart.text
+                text: assistantMessage.content
             };
         }
 
         return {
             type: 'text',
-            text: 'No response received from AI'
+            text: 'Нет ответа от ИИ'
         };
-    } catch (error) {
-        if (error.message.statusCode === 503 && error.message.includes('overloaded')) {
-            return {
-                type: 'error',
-                text: 'Gemini API is currently overloaded. Please try again later.'
-            };
-        }
-        if (error.message.includes('exceeded')) {
-            switch (apiKey) {
-                case process.env.GEMINI_API_KEY:
-                    apiKey = process.env.GEMINI_API_KEY_1;
-                    break
-                case process.env.GEMINI_API_KEY_1:
-                    apiKey = process.env.GEMINI_API_KEY_2;
-                    break
-                case process.env.GEMINI_API_KEY_2:
-                    apiKey = process.env.GEMINI_API_KEY;
-            }
-            return {
-                type: 'error',
-                text: 'Something went wrong with limits try again please'
-            };
 
+    } catch (error) {
+        console.error('Error in askQwen:', error);
+
+        if (error.message.includes('rate limit') || error.message.includes('429')) {
+            return {
+                type: 'error',
+                text: 'Превышен лимит запросов к API. Пожалуйста, попробуйте позже.'
+            };
         }
+
         return {
             type: 'error',
-            text: 'Sorry, I encountered an error while processing your request.' + error.message
+            text: 'Извините, произошла ошибка при обработке вашего запроса: ' + error.message
         };
     }
-}
-
-
-// CLIENT - Updated connection logic
-const serverUrl = process.env.SERVER_URL || 'http://localhost:3001';
-mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {    console.log('Connected to MCP server');
+}// CLIENT - Updated connection logic
+const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
+mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
+    console.log('Connected to MCP server');
     try {
         const toolsList = await mcpClient.listTools();
         tools = toolsList.tools.map(tool => {
@@ -247,7 +333,7 @@ mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization
 
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`HTTP server running at http://0.0.0.0:${PORT}`);
-        });;
+        });
     } catch (error) {
         console.error('Error after MCP connection:', error);
         process.exit(1);
@@ -289,14 +375,14 @@ io.use(async (socket, next) => {
         next(new Error('Unauthorized: ' + (err.message || 'Неизвестная ошибка')));
     }
 });
-io.on('connection', (socket) => {
 
+io.on('connection', (socket) => {
     const sessionId = socket.id;
     const initialChatHistory = [
         {role: 'user', parts: [{text: SYSTEM_PROMPT}]},
         {
             role: 'model',
-            parts: [{text: 'Understood! I will properly use query filters for searching related data in MongoDB and gather all necessary information to provide comprehensive answers.'}]
+            parts: [{text: 'Понятно! Я буду правильно использовать фильтры запросов для поиска связанных данных в MongoDB и собирать всю необходимую информацию для предоставления исчерпывающих ответов.'}]
         }
     ];
 
@@ -314,7 +400,7 @@ io.on('connection', (socket) => {
             socket.emit('error', {error: 'Workspace ID is required'});
             return;
         }
-        const userInput =  message.userMessage + ` {workspace_id: '${workspace}', date: '${new Date().toISOString()}'}`;
+        const userInput = message.userMessage + ` {workspace_id: '${workspace}', date: '${new Date().toISOString()}'}`;
         const chatHistory = chatSessions.get(sessionId);
 
         chatHistory.push({role: 'user', parts: [{text: userInput}]});
@@ -327,7 +413,7 @@ io.on('connection', (socket) => {
             while (iterationCount < maxIterations) {
                 iterationCount++;
 
-                const aiResponse = await askGemini(sessionId);
+                const aiResponse = await askQwen(sessionId);
                 if (aiResponse.type === 'error') {
                     finalResponse = aiResponse.text;
                     break;
@@ -364,12 +450,11 @@ io.on('connection', (socket) => {
                             }
                         }]
                     });
-
                 }
             }
 
             if (iterationCount >= maxIterations) {
-                finalResponse = "Извините, запрос слишком сложный попробуйте переформулировать его или уточнить детали.";
+                finalResponse = "Извините, запрос слишком сложный. Попробуйте переформулировать его или уточнить детали.";
             }
 
             if (chatHistory.length > 5) {
@@ -385,7 +470,7 @@ io.on('connection', (socket) => {
                 }, 0);
             }
 
-            const MAX_TOKENS = 262144;
+            const MAX_TOKENS = 100000; // Qwen может иметь другой лимит токенов
 
             if (countTokens(chatHistory) > MAX_TOKENS) {
                 const systemMessages = chatHistory.slice(0, 2);
@@ -403,6 +488,7 @@ io.on('connection', (socket) => {
             socket.emit('chat_response', {response: finalResponse});
 
         } catch (error) {
+            console.error('Error in chat message handler:', error);
             socket.emit('error', {error: 'Internal server error'});
         }
     });
@@ -413,132 +499,6 @@ io.on('connection', (socket) => {
         }
     });
 });
-
-// app.post('/init-session', (req, res) => {
-//     const sessionId = Date.now().toString();
-//     const initialChatHistory = [
-//         {role: 'user', parts: [{text: SYSTEM_PROMPT}]},
-//         {
-//             role: 'model',
-//             parts: [{text: 'Understood! I will properly use query filters for searching related data in MongoDB and gather all necessary information to provide comprehensive answers.'}]
-//         }
-//     ];
-//
-//     chatSessions.set(sessionId, initialChatHistory);
-//     res.json({ sessionId });
-// });
-//
-// app.post('/chat', async (req, res) => {
-//     const { sessionId, message } = req.body;
-//
-//     if (!sessionId || !chatSessions.has(sessionId)) {
-//         return res.status(400).json({ error: 'Invalid session ID' });
-//     }
-//
-//     if (!message) {
-//         return res.status(400).json({ error: 'Message is required' });
-//     }
-//
-//     const userInput = message + " {workspace_id: '6658100482bdfc1c969c7455'}";
-//     const chatHistory = chatSessions.get(sessionId);
-//
-//     chatHistory.push({role: 'user', parts: [{text: userInput}]});
-//
-//     let finalResponse = '';
-//     let iterationCount = 0;
-//     const maxIterations = 15;
-//
-//     try {
-//         while (iterationCount < maxIterations) {
-//             iterationCount++;
-//
-//             const aiResponse = await askGemini(sessionId);
-//
-//             if (aiResponse.type === 'error') {
-//                 finalResponse = aiResponse.text;
-//                 break;
-//             }
-//
-//             if (aiResponse.type === 'text') {
-//                 // AI предоставил окончательный текстовый ответ
-//                 finalResponse = aiResponse.text;
-//                 chatHistory.push({role: 'model', parts: [{text: aiResponse.text}]});
-//                 break;
-//             }
-//
-//             if (aiResponse.type === 'tool_call') {
-//                 // Добавляем сообщение о вызове инструмента
-//                 chatHistory.push({
-//                     role: 'model',
-//                     parts: [{
-//                         functionCall: {
-//                             name: aiResponse.toolName,
-//                             args: aiResponse.toolArgs
-//                         }
-//                     }]
-//                 });
-//
-//                 // Добавляем ответное сообщение инструмента
-//                 chatHistory.push({
-//                     role: 'user',
-//                     parts: [{
-//                         functionResponse: {
-//                             name: aiResponse.toolName,
-//                             response: {result: aiResponse.toolResult}
-//                         }
-//                     }]
-//                 });
-//
-//                 // Продолжаем цикл, чтобы получить следующий ответ
-//                 continue;
-//             }
-//         }
-//
-//         if (iterationCount >= maxIterations) {
-//             finalResponse = "I've reached the maximum number of tool calls. Let me provide you with what I've found so far.";
-//         }
-//
-//         // Обрезаем историю чата, если она становится слишком длинной
-//         if (chatHistory.length > 30) {
-//             // Сохраняем первые системные сообщения
-//             const systemMessages = chatHistory.slice(0, 2);
-//             // Сохраняем последние N сообщений
-//             const recentMessages = chatHistory.slice(-28);
-//             chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
-//         }
-//
-//         res.json({ response: finalResponse });
-//     } catch (error) {
-//         console.error('Error processing chat request:', error);
-//         res.status(500).json({ error: 'Internal server error' });
-//     }
-// });
-//
-// // Эндпоинт для очистки сессии
-// app.post('/clear-session', (req, res) => {
-//     const { sessionId } = req.body;
-//
-//     if (!sessionId || !chatSessions.has(sessionId)) {
-//         return res.status(400).json({ error: 'Invalid session ID' });
-//     }
-//
-//     chatSessions.delete(sessionId);
-//     res.json({ success: true });
-// });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // сколько у меня техник
 // сколько дефектов у техники с номером 023WS02
 // сколько дефектов у техники с номером 320AU07
