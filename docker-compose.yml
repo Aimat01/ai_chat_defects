@@ -13,7 +13,6 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_API_KEY1=${GEMINI_API_KEY1}
       - GEMINI_API_KEY2=${GEMINI_API_KEY2}
-      - SYSTEM_PROMPT=${SYSTEM_PROMPT}
     depends_on:
       - server
     restart: unless-stopped
