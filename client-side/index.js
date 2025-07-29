@@ -3,7 +3,6 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {GoogleGenAI} from "@google/genai";
 import express from 'express';
-import cors from 'cors';
 import http from 'http';
 import {Server} from 'socket.io';
 import {authorize} from './authMiddleware.js';
@@ -20,8 +19,11 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin: '*',
-        methods: ['GET', 'POST']
-    }
+        methods: ['GET', 'POST'],
+        credentials: true,
+        allowedHeaders: ['authorization', 'workspace', 'Content-Type']
+    },
+    transports: ['websocket', 'polling']
 });
 
 let apiKey = process.env.GEMINI_API_KEY;
@@ -243,9 +245,9 @@ mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization
 
         console.log('Available tools:', tools.map(tool => tool.name).join(', '));
 
-        server.listen(PORT, () => {
-            console.log(`HTTP server running at http://localhost:${PORT}`);
-        });
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`HTTP server running at http://0.0.0.0:${PORT}`);
+        });;
     } catch (error) {
         console.error('Error after MCP connection:', error);
         process.exit(1);
@@ -266,14 +268,25 @@ const workspaceMap = new Map();
 io.use(async (socket, next) => {
     const accessToken = socket.handshake.headers['authorization'];
     const workspace = socket.handshake.headers['workspace'];
+
+    console.log('Попытка подключения:');
+    console.log('IP клиента:', socket.handshake.address);
+    console.log('Headers:', JSON.stringify(socket.handshake.headers));
+    console.log('Access Token:', accessToken);
+    console.log('Workspace:', workspace);
+
     try {
         await authorize(accessToken, workspace);
         workspaceMap.set(socket.id, workspace);
+        console.log('Авторизация успешна для сокета:', socket.id);
         next();
     } catch (err) {
-        console.log(err);
-        console.log(socket)
-        next(new Error('Unauthorized'));
+        console.error('Ошибка авторизации:', err);
+        console.error('Данные сокета:', {
+            id: socket.id,
+            headers: socket.handshake.headers
+        });
+        next(new Error('Unauthorized: ' + (err.message || 'Неизвестная ошибка')));
     }
 });
 io.on('connection', (socket) => {
