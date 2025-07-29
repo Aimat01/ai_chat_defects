@@ -25,5 +25,5 @@ services:
       - ACCESS_KEY=${ACCESS_KEY}
       - MONGO_URI=${MONGO_URI}
       - MONGODB_NAME=${MONGODB_NAME}
-      - POSTGRES_URI=${POSTGRES_URI}
+      - POSTGRES_URL=${POSTGRES_URL}
     restart: unless-stopped
