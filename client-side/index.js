@@ -201,7 +201,6 @@ async function askGemini(sessionId) {
 // CLIENT - Updated connection logic
 const serverUrl = process.env.SERVER_URL || 'http://localhost:3001';
 mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {    console.log('Connected to MCP server');
-
     try {
         const toolsList = await mcpClient.listTools();
         tools = toolsList.tools.map(tool => {
