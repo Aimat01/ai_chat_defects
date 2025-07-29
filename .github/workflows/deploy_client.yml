@@ -43,7 +43,7 @@ jobs:
 
             docker run -d \
               --name mcpmongo-client \
-              -p 3000:3000 \
+              --network host \
               -e SERVER_URL="http://localhost:3001" \
               -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
               -e MONGODB_NAME="${{ secrets.MONGODB_NAME }}" \
