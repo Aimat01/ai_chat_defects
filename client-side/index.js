@@ -272,6 +272,8 @@ io.use(async (socket, next) => {
         workspaceMap.set(socket.id, workspace);
         next();
     } catch (err) {
+        console.log(err);
+        console.log(socket)
         next(new Error('Unauthorized'));
     }
 });
