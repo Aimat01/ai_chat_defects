@@ -193,13 +193,13 @@ async function askGemini(sessionId) {
         }
         return {
             type: 'error',
-            text: 'Sorry, I encountered an error while processing your request.'
+            text: 'Sorry, I encountered an error while processing your request.' + error.message
         };
     }
 }
 
 // CLIENT - Updated connection logic
-const serverUrl = process.env.SERVER_URL || 'http://localhost:3001';
+const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
 mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {    console.log('Connected to MCP server');
 
     try {
