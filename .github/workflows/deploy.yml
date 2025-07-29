@@ -1,0 +1,117 @@
+name: Combined MCP Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mcp-mongo-project/**'
+      - 'client-side/**'
+      - '.github/workflows/deploy_combined.yml'
+
+jobs:
+  build-and-deploy-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to Private Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./mcp-mongo-project
+          push: true
+          tags: ${{ secrets.REGISTRY_URL }}/mcpmongo-server:latest
+
+      - name: Deploy server
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VM_IPADDRESS }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_PRIVATE_KEY }}
+          script: |
+            docker stop mcpmongo-server || true
+            docker rm mcpmongo-server || true
+
+            docker login ${{ secrets.REGISTRY_URL }} -u ${{ secrets.REGISTRY_USER }} -p ${{ secrets.REGISTRY_PASSWORD }}
+
+            docker pull ${{ secrets.REGISTRY_URL }}/mcpmongo-server:latest
+
+            docker run -d \
+              --name mcpmongo-server \
+              -p 3001:3001 \
+              -e ACCESS_KEY="${{ secrets.ACCESS_KEY }}" \
+              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+              -e MONGODB_NAME="${{ secrets.MONGODB_NAME }}" \
+              -e POSTGRES_URL="${{ secrets.POSTGRES_URL }}" \
+              --restart unless-stopped \
+              ${{ secrets.REGISTRY_URL }}/mcpmongo-server:latest
+            
+            echo "Ожидаем запуск сервера..."
+            sleep 10
+            MAX_RETRIES=5
+            RETRY_COUNT=0
+            until $(curl --output /dev/null --silent --fail http://localhost:3001) || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+              echo "Попытка $RETRY_COUNT/$MAX_RETRIES - Сервер еще не готов..."
+              sleep 5
+              RETRY_COUNT=$((RETRY_COUNT+1))
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "Сервер не запустился"
+              exit 1
+            else
+              echo "Сервер успешно запущен"
+            fi
+
+  build-and-deploy-client:
+    needs: build-and-deploy-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to Private Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push client image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./client-side
+          push: true
+          tags: ${{ secrets.REGISTRY_URL }}/mcpmongo-client:latest
+
+      - name: Deploy client
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VM_IPADDRESS }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_PRIVATE_KEY }}
+          script: |
+            docker stop mcpmongo-client || true
+            docker rm mcpmongo-client || true
+
+            docker login ${{ secrets.REGISTRY_URL }} -u ${{ secrets.REGISTRY_USER }} -p ${{ secrets.REGISTRY_PASSWORD }}
+
+            docker pull ${{ secrets.REGISTRY_URL }}/mcpmongo-client:latest
+
+            docker run -d \
+              --name mcpmongo-client \
+              --network host \
+              -e SERVER_URL="http://localhost:3001" \
+              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+              -e MONGODB_NAME="${{ secrets.MONGODB_NAME }}" \
+              -e ACCESS_KEY="${{ secrets.ACCESS_KEY }}" \
+              -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+              -e GEMINI_API_KEY1="${{ secrets.GEMINI_API_KEY1 }}" \
+              -e GEMINI_API_KEY2="${{ secrets.GEMINI_API_KEY2 }}" \
+              --restart unless-stopped \
+              ${{ secrets.REGISTRY_URL }}/mcpmongo-client:latest
