@@ -105,5 +105,6 @@ jobs:
               -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
               -e GEMINI_API_KEY1="${{ secrets.GEMINI_API_KEY1 }}" \
               -e GEMINI_API_KEY2="${{ secrets.GEMINI_API_KEY2 }}" \
+              -e OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}" \
               --restart unless-stopped \
               ${{ secrets.REGISTRY_URL }}/mcpmongo-client:latest
