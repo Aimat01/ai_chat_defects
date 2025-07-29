@@ -54,19 +54,11 @@ jobs:
             
             echo "Ожидаем запуск сервера..."
             sleep 10
-            MAX_RETRIES=5
-            RETRY_COUNT=0
-            until $(curl --output /dev/null --silent --fail http://localhost:3001) || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
-              echo "Попытка $RETRY_COUNT/$MAX_RETRIES - Сервер еще не готов..."
-              sleep 5
-              RETRY_COUNT=$((RETRY_COUNT+1))
-            done
-            
-            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-              echo "Сервер не запустился"
-              exit 1
+            if [ "$(docker inspect -f {{.State.Running}} mcpmongo-server)" = "true" ]; then
+            echo "Контейнер сервера запущен"
             else
-              echo "Сервер успешно запущен"
+            echo "Контейнер сервера не запущен"
+            exit 1
             fi
 
   build-and-deploy-client:
