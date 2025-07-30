@@ -33,7 +33,8 @@ if (!openRouterApiKey) {
     process.exit(1);
 }
 
-let tools = [];
+// Инструменты сразу в формате OpenRouter
+let formattedTools = [];
 
 const chatSessions = new Map();
 
@@ -109,58 +110,12 @@ MongoDB — информация о технике и документации:
 const mcpClient = new Client({
     name: 'mongodb-qwen-chatbot',
     version: "1.0.0",
+    requestTimeoutMs: 120000
 });
 
 async function askQwen(sessionId) {
     try {
-        const chatHistory = chatSessions.get(sessionId);
-
-        // Преобразование истории чата в формат OpenRouter
-        const messages = chatHistory.map(msg => {
-            if (msg.role === 'user' && msg.parts[0].text) {
-                return {
-                    role: 'user',
-                    content: msg.parts[0].text
-                };
-            } else if (msg.role === 'model' && msg.parts[0].text) {
-                return {
-                    role: 'assistant',
-                    content: msg.parts[0].text
-                };
-            } else if (msg.role === 'model' && msg.parts[0].functionCall) {
-                return {
-                    role: 'assistant',
-                    content: null,
-                    tool_calls: [{
-                        type: 'function',
-                        function: {
-                            name: msg.parts[0].functionCall.name,
-                            arguments: JSON.stringify(msg.parts[0].functionCall.args)
-                        }
-                    }]
-                };
-            } else if (msg.role === 'user' && msg.parts[0].functionResponse) {
-                return {
-                    role: 'tool',
-                    tool_call_id: 'call_' + Math.random().toString(36).substring(2, 15),
-                    name: msg.parts[0].functionResponse.name,
-                    content: JSON.stringify(msg.parts[0].functionResponse.response)
-                };
-            }
-            return null;
-        }).filter(Boolean);
-
-        // Формат инструментов согласно документации OpenRouter
-        const functions = tools.map(tool => {
-            return {
-                type: "function",
-                function: {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters
-                }
-            };
-        });
+        const messages = chatSessions.get(sessionId);
 
         // Запрос к OpenRouter API
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -172,10 +127,10 @@ async function askQwen(sessionId) {
                 'X-Title': 'MongoDB-Qwen-Chatbot'
             },
             body: JSON.stringify({
-                model: 'qwen/qwen3-coder:free',
+                model: 'google/gemini-2.5-flash',
                 messages: messages,
-                tools: functions.length > 0 ? functions : undefined,
-                tool_choice: functions.length > 0 ? "auto" : undefined,
+                tools: formattedTools.length > 0 ? formattedTools : undefined,
+                tool_choice: formattedTools.length > 0 ? "auto" : undefined,
                 temperature: 0.7,
                 max_tokens: 2048
             })
@@ -285,13 +240,16 @@ async function askQwen(sessionId) {
             text: 'Извините, произошла ошибка при обработке вашего запроса: ' + error.message
         };
     }
-}// CLIENT - Updated connection logic
+}
+
+// CLIENT - Updated connection logic
 const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
 mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
     console.log('Connected to MCP server');
     try {
         const toolsList = await mcpClient.listTools();
-        tools = toolsList.tools.map(tool => {
+        // Сразу форматируем инструменты в формат OpenRouter
+        formattedTools = toolsList.tools.map(tool => {
             const cleanProperties = {};
 
             for (const [key, value] of Object.entries(tool.inputSchema.properties || {})) {
@@ -319,17 +277,20 @@ mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization
             }
 
             return {
-                name: tool.name,
-                description: tool.description,
-                parameters: {
-                    type: tool.inputSchema.type,
-                    properties: cleanProperties,
-                    required: tool.inputSchema.required || []
+                type: "function",
+                function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: {
+                        type: tool.inputSchema.type,
+                        properties: cleanProperties,
+                        required: tool.inputSchema.required || []
+                    }
                 }
             };
         });
 
-        console.log('Available tools:', tools.map(tool => tool.name).join(', '));
+        console.log('Available tools:', formattedTools.map(tool => tool.function.name).join(', '));
 
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`HTTP server running at http://0.0.0.0:${PORT}`);
@@ -378,12 +339,10 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
     const sessionId = socket.id;
+    // Храним историю чата сразу в формате OpenRouter
     const initialChatHistory = [
-        {role: 'user', parts: [{text: SYSTEM_PROMPT}]},
-        {
-            role: 'model',
-            parts: [{text: 'Понятно! Я буду правильно использовать фильтры запросов для поиска связанных данных в MongoDB и собирать всю необходимую информацию для предоставления исчерпывающих ответов.'}]
-        }
+        {role: 'user', content: SYSTEM_PROMPT},
+        {role: 'assistant', content: 'Понятно! Я буду правильно использовать фильтры запросов для поиска связанных данных в MongoDB и собирать всю необходимую информацию для предоставления исчерпывающих ответов.'}
     ];
 
     chatSessions.set(sessionId, initialChatHistory);
@@ -401,9 +360,10 @@ io.on('connection', (socket) => {
             return;
         }
         const userInput = message.userMessage + ` {workspace_id: '${workspace}', date: '${new Date().toISOString()}'}`;
-        const chatHistory = chatSessions.get(sessionId);
+        const messages = chatSessions.get(sessionId);
 
-        chatHistory.push({role: 'user', parts: [{text: userInput}]});
+        // Добавляем сообщение пользователя сразу в формате OpenRouter
+        messages.push({role: 'user', content: userInput});
 
         let finalResponse = '';
         let iterationCount = 0;
@@ -421,7 +381,8 @@ io.on('connection', (socket) => {
 
                 if (aiResponse.type === 'text') {
                     finalResponse = aiResponse.text;
-                    chatHistory.push({role: 'model', parts: [{text: aiResponse.text}]});
+                    // Добавляем ответ модели в формате OpenRouter
+                    messages.push({role: 'assistant', content: aiResponse.text});
                     break;
                 }
 
@@ -431,24 +392,25 @@ io.on('connection', (socket) => {
                         args: aiResponse.toolArgs
                     });
 
-                    chatHistory.push({
-                        role: 'model',
-                        parts: [{
-                            functionCall: {
+                    // Добавляем вызов инструмента в формате OpenRouter
+                    messages.push({
+                        role: 'assistant',
+                        content: null,
+                        tool_calls: [{
+                            type: 'function',
+                            function: {
                                 name: aiResponse.toolName,
-                                args: aiResponse.toolArgs
+                                arguments: JSON.stringify(aiResponse.toolArgs)
                             }
                         }]
                     });
 
-                    chatHistory.push({
-                        role: 'user',
-                        parts: [{
-                            functionResponse: {
-                                name: aiResponse.toolName,
-                                response: {result: aiResponse.toolResult}
-                            }
-                        }]
+                    // Добавляем ответ инструмента в формате OpenRouter
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: 'call_' + Math.random().toString(36).substring(2, 15),
+                        name: aiResponse.toolName,
+                        content: JSON.stringify({result: aiResponse.toolResult})
                     });
                 }
             }
@@ -457,27 +419,28 @@ io.on('connection', (socket) => {
                 finalResponse = "Извините, запрос слишком сложный. Попробуйте переформулировать его или уточнить детали.";
             }
 
-            if (chatHistory.length > 5) {
-                const systemMessages = chatHistory.slice(0, 2);
-                const recentMessages = chatHistory.slice(-3);
+            // Управление размером истории чата
+            if (messages.length > 5) {
+                const systemMessages = messages.slice(0, 2);
+                const recentMessages = messages.slice(-3);
                 chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
             }
 
-            function countTokens(chatHistory) {
-                return chatHistory.reduce((sum, msg) => {
-                    const text = msg.parts?.[0]?.text || '';
+            function countTokens(messages) {
+                return messages.reduce((sum, msg) => {
+                    const text = msg.content || '';
                     return sum + text.split(/\s+/).length;
                 }, 0);
             }
 
-            const MAX_TOKENS = 100000; // Qwen может иметь другой лимит токенов
+            const MAX_TOKENS = 100000;
 
-            if (countTokens(chatHistory) > MAX_TOKENS) {
-                const systemMessages = chatHistory.slice(0, 2);
+            if (countTokens(messages) > MAX_TOKENS) {
+                const systemMessages = messages.slice(0, 2);
                 let tokens = countTokens(systemMessages);
                 const recentMessages = [];
-                for (let i = chatHistory.length - 1; i >= 2; i--) {
-                    const msg = chatHistory[i];
+                for (let i = messages.length - 1; i >= 2; i--) {
+                    const msg = messages[i];
                     const msgTokens = countTokens([msg]);
                     if (tokens + msgTokens > MAX_TOKENS) break;
                     recentMessages.unshift(msg);
