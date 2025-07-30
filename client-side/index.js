@@ -167,7 +167,6 @@ async function askAI(sessionId) {
             requestBody.tool_choice = "auto";
         }
 
-        console.log('Sending request to OpenRouter:', JSON.stringify(requestBody, null, 2));
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -186,7 +185,6 @@ async function askAI(sessionId) {
         }
 
         const responseData = await response.json();
-        console.log('OpenRouter response:', JSON.stringify(responseData, null, 2));
 
         if (!responseData || !responseData.choices || !responseData.choices.length) {
             console.error('Invalid response structure:', responseData);
@@ -332,19 +330,11 @@ io.use(async (socket, next) => {
     const accessToken = socket.handshake.headers['authorization'];
     const workspace = socket.handshake.headers['workspace'];
 
-    console.log('Попытка подключения:');
-    console.log('IP клиента:', socket.handshake.address);
-    console.log('Headers:', JSON.stringify(socket.handshake.headers));
-    console.log('Access Token:', accessToken);
-    console.log('Workspace:', workspace);
-
     try {
         await authorize(accessToken, workspace);
         workspaceMap.set(socket.id, workspace);
-        console.log('Авторизация успешна для сокета:', socket.id);
         next();
     } catch (err) {
-        console.error('Ошибка авторизации:', err);
         console.error('Данные сокета:', {
             id: socket.id,
             headers: socket.handshake.headers
