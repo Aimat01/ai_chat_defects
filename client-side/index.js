@@ -114,9 +114,60 @@ const mcpClient = new Client({
     requestTimeoutMs: 120000
 });
 
+// Simplified and corrected askAI function for OpenRouter + Gemini
 async function askAI(sessionId) {
     try {
         const messages = chatSessions.get(sessionId);
+
+        // Clean up messages - ensure they follow OpenAI format
+        const cleanMessages = messages.map(msg => {
+            if (msg.role === 'user') {
+                return {
+                    role: 'user',
+                    content: msg.content || ''
+                };
+            } else if (msg.role === 'assistant') {
+                const cleanMsg = {
+                    role: 'assistant',
+                    content: msg.content
+                };
+
+                // Include tool calls if present
+                if (msg.tool_calls) {
+                    cleanMsg.tool_calls = msg.tool_calls;
+                }
+
+                return cleanMsg;
+            } else if (msg.role === 'tool') {
+                return {
+                    role: 'tool',
+                    tool_call_id: msg.tool_call_id,
+                    content: msg.content
+                };
+            } else if (msg.role === 'system') {
+                return {
+                    role: 'system',
+                    content: msg.content || ''
+                };
+            }
+
+            return null;
+        }).filter(msg => msg !== null);
+
+        const requestBody = {
+            model: 'google/gemini-2.5-flash',
+            messages: cleanMessages,
+            temperature: 0.7,
+            max_tokens: 2048
+        };
+
+        // Add tools if available
+        if (formattedTools.length > 0) {
+            requestBody.tools = formattedTools;
+            requestBody.tool_choice = "auto";
+        }
+
+        console.log('Sending request to OpenRouter:', JSON.stringify(requestBody, null, 2));
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -126,20 +177,7 @@ async function askAI(sessionId) {
                 'HTTP-Referer': 'http://localhost:3000',
                 'X-Title': 'MongoDB-Qwen-Chatbot'
             },
-            body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                google_gemini: {
-                    contents: messages.map(msg => ({
-                        role: msg.role === 'user' ? 'user' : 'model',
-                        parts: [{ text: msg.content || '' }]
-                    }))
-                },
-                messages: messages, // Оставляем для совместимости
-                tools: formattedTools.length > 0 ? formattedTools : undefined,
-                tool_choice: formattedTools.length > 0 ? "auto" : undefined,
-                temperature: 0.7,
-                max_tokens: 2048
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -150,7 +188,6 @@ async function askAI(sessionId) {
         const responseData = await response.json();
         console.log('OpenRouter response:', JSON.stringify(responseData, null, 2));
 
-        // Проверка структуры ответа
         if (!responseData || !responseData.choices || !responseData.choices.length) {
             console.error('Invalid response structure:', responseData);
             return {
@@ -169,17 +206,16 @@ async function askAI(sessionId) {
             };
         }
 
-        // Проверяем наличие tool_calls (новый формат API)
+        // Handle tool calls
         if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-            // Берем первый вызов инструмента
-            const toolCall = assistantMessage.tool_calls[0].function;
-            console.log(`🔧 Session ${sessionId} - Tool used:`, toolCall.name);
-            console.log(`🔧 Session ${sessionId} - Tool arguments:`, toolCall.arguments);
+            const toolCall = assistantMessage.tool_calls[0];
+            console.log(`🔧 Session ${sessionId} - Tool used:`, toolCall.function.name);
+            console.log(`🔧 Session ${sessionId} - Tool arguments:`, toolCall.function.arguments);
 
-            const args = JSON.parse(toolCall.arguments);
+            const args = JSON.parse(toolCall.function.arguments);
 
             const toolResponse = await mcpClient.callTool({
-                name: toolCall.name,
+                name: toolCall.function.name,
                 arguments: args
             });
 
@@ -190,36 +226,12 @@ async function askAI(sessionId) {
 
             return {
                 type: 'tool_call',
-                toolName: toolCall.name,
+                toolName: toolCall.function.name,
                 toolArgs: args,
-                toolResult: toolResult
-            };
-        } else if (assistantMessage.function_call) {
-            // Старый формат - оставляем для совместимости
-            const functionCall = assistantMessage.function_call;
-            console.log(`🔧 Session ${sessionId} - Tool used:`, functionCall.name);
-            console.log(`🔧 Session ${sessionId} - Tool arguments:`, functionCall.arguments);
-
-            const args = JSON.parse(functionCall.arguments);
-
-            const toolResponse = await mcpClient.callTool({
-                name: functionCall.name,
-                arguments: args
-            });
-
-            let toolResult = "No content received from tool";
-            if (toolResponse.content && toolResponse.content.length > 0) {
-                toolResult = toolResponse.content[0].text;
-            }
-
-            return {
-                type: 'tool_call',
-                toolName: functionCall.name,
-                toolArgs: args,
-                toolResult: toolResult
+                toolResult: toolResult,
+                toolCallId: toolCall.id // Important for proper conversation flow
             };
         } else if (assistantMessage.content) {
-            // Обработка текстового ответа
             return {
                 type: 'text',
                 text: assistantMessage.content
@@ -247,14 +259,12 @@ async function askAI(sessionId) {
         };
     }
 }
-
 // CLIENT - Updated connection logic
 const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
 mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
     console.log('Connected to MCP server');
     try {
         const toolsList = await mcpClient.listTools();
-        // Сразу форматируем инструменты в формат OpenRouter
         formattedTools = toolsList.tools.map(tool => {
             const cleanProperties = {};
 
@@ -368,7 +378,7 @@ io.on('connection', (socket) => {
         const userInput = message.userMessage + ` {workspace_id: '${workspace}', date: '${new Date().toISOString()}'}`;
         const messages = chatSessions.get(sessionId);
 
-        // Добавляем сообщение пользователя сразу в формате OpenRouter
+        // Add user message
         messages.push({role: 'user', content: userInput});
 
         let finalResponse = '';
@@ -387,7 +397,6 @@ io.on('connection', (socket) => {
 
                 if (aiResponse.type === 'text') {
                     finalResponse = aiResponse.text;
-                    // Добавляем ответ модели в формате OpenRouter
                     messages.push({role: 'assistant', content: aiResponse.text});
                     break;
                 }
@@ -398,11 +407,12 @@ io.on('connection', (socket) => {
                         args: aiResponse.toolArgs
                     });
 
-                    // Добавляем вызов инструмента в формате OpenRouter
+                    // Add assistant message with tool call (proper format)
                     messages.push({
                         role: 'assistant',
                         content: null,
                         tool_calls: [{
+                            id: aiResponse.toolCallId || 'call_' + Math.random().toString(36).substring(2, 15),
                             type: 'function',
                             function: {
                                 name: aiResponse.toolName,
@@ -411,11 +421,11 @@ io.on('connection', (socket) => {
                         }]
                     });
 
-                    // Добавляем ответ инструмента в формате OpenRouter
+                    // Add tool response with matching ID
+                    const toolCallId = aiResponse.toolCallId || 'call_' + Math.random().toString(36).substring(2, 15);
                     messages.push({
                         role: 'tool',
-                        tool_call_id: 'call_' + Math.random().toString(36).substring(2, 15),
-                        name: aiResponse.toolName,
+                        tool_call_id: toolCallId,
                         content: JSON.stringify({result: aiResponse.toolResult})
                     });
                 }
@@ -425,35 +435,13 @@ io.on('connection', (socket) => {
                 finalResponse = "Извините, запрос слишком сложный. Попробуйте переформулировать его или уточнить детали.";
             }
 
-            // Управление размером истории чата
-            if (messages.length > 5) {
+            // Memory management - keep conversation manageable
+            if (messages.length > 50) {
                 const systemMessages = messages.slice(0, 2);
-                const recentMessages = messages.slice(-3);
+                const recentMessages = messages.slice(-20);
                 chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
             }
 
-            function countTokens(messages) {
-                return messages.reduce((sum, msg) => {
-                    const text = msg.content || '';
-                    return sum + text.split(/\s+/).length;
-                }, 0);
-            }
-
-            const MAX_TOKENS = 100000;
-
-            if (countTokens(messages) > MAX_TOKENS) {
-                const systemMessages = messages.slice(0, 2);
-                let tokens = countTokens(systemMessages);
-                const recentMessages = [];
-                for (let i = messages.length - 1; i >= 2; i--) {
-                    const msg = messages[i];
-                    const msgTokens = countTokens([msg]);
-                    if (tokens + msgTokens > MAX_TOKENS) break;
-                    recentMessages.unshift(msg);
-                    tokens += msgTokens;
-                }
-                chatSessions.set(sessionId, [...systemMessages, ...recentMessages]);
-            }
             socket.emit('chat_response', {response: finalResponse});
 
         } catch (error) {
