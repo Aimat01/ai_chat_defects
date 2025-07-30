@@ -109,16 +109,15 @@ MongoDB — информация о технике и документации:
 Если пользователь четко не указывает дату или не говорит за сегодня ищи данные за все время`
 
 const mcpClient = new Client({
-    name: 'mongodb-qwen-chatbot',
+    name: 'mongodb-gemini-chatbot',
     version: "1.0.0",
     requestTimeoutMs: 120000
 });
 
-async function askQwen(sessionId) {
+async function askAI(sessionId) {
     try {
         const messages = chatSessions.get(sessionId);
 
-        // Запрос к OpenRouter API
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -129,7 +128,13 @@ async function askQwen(sessionId) {
             },
             body: JSON.stringify({
                 model: 'google/gemini-2.5-flash',
-                messages: messages,
+                google_gemini: {
+                    contents: messages.map(msg => ({
+                        role: msg.role === 'user' ? 'user' : 'model',
+                        parts: [{ text: msg.content || '' }]
+                    }))
+                },
+                messages: messages, // Оставляем для совместимости
                 tools: formattedTools.length > 0 ? formattedTools : undefined,
                 tool_choice: formattedTools.length > 0 ? "auto" : undefined,
                 temperature: 0.7,
@@ -227,7 +232,7 @@ async function askQwen(sessionId) {
         };
 
     } catch (error) {
-        console.error('Error in askQwen:', error);
+        console.error('Error in askAI:', error);
 
         if (error.message.includes('rate limit') || error.message.includes('429')) {
             return {
@@ -374,7 +379,7 @@ io.on('connection', (socket) => {
             while (iterationCount < maxIterations) {
                 iterationCount++;
 
-                const aiResponse = await askQwen(sessionId);
+                const aiResponse = await askAI(sessionId);
                 if (aiResponse.type === 'error') {
                     finalResponse = aiResponse.text;
                     break;
