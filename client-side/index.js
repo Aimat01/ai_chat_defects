@@ -237,7 +237,7 @@ async function askAI(sessionId) {
                 text: assistantMessage.content
             };
         }
-
+        console.error('No content in assistant message:', assistantMessage);
         return {
             type: 'text',
             text: 'Нет ответа от ИИ'
