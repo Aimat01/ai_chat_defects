@@ -1,6 +1,8 @@
 import {DatabaseConnection} from '../utils/connection.js';
 import {McpError, ErrorCode} from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
+import { v5 as uuidv5 } from 'uuid';
+import { ObjectId } from 'mongodb';
 
 dotenv.config();
 
@@ -21,6 +23,7 @@ export class PostgresMcpService {
     // Execute SELECT queries
     async executeQuery(query, parameters = [], options = {}) {
         try {
+            query = this.processUUIDs(query);
             const {limit, offset} = options;
             let finalQuery = query;
 
@@ -129,4 +132,46 @@ export class PostgresMcpService {
             throw new McpError(ErrorCode.InternalError, `Relationship analysis failed: ${error.message}`);
         }
     }
+
+    processUUIDs(query) {
+        if (!query || typeof query !== 'string') {
+            return query;
+        }
+
+        const idRegex = /(\b(?:_?id|[a-z_]+_id)\s*=\s*['"])([0-9a-fA-F]{24})(['"])/gi;
+
+        // Заменяем найденные идентификаторы на их UUID эквиваленты
+        const processedQuery = query.replace(idRegex, (match, prefix, id, suffix) => {
+            const uuid = this.convertToUuid(id);
+            if (uuid) {
+                return `${prefix}${uuid}${suffix}`;
+            }
+            return match;
+        });
+
+        return processedQuery;
+    }
+
+    convertToUuid(value) {
+        // Если это ObjectId, преобразуем в строку
+
+        if (value instanceof ObjectId) {
+            value = value.toString();
+        }
+        // Если это объект с $oid полем (формат EJSON)
+        else if (value && typeof value === 'object' && value.$oid) {
+            value = value.$oid;
+        }
+
+
+        // Если у нас строка, создаём UUID v5 на основе неё
+        if (typeof value === 'string') {
+            // Константа NAMESPACE_DNS в формате UUID
+            const NAMESPACE_DNS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+            return uuidv5(value, NAMESPACE_DNS);
+        }
+
+        return null;
+    }
+
 }

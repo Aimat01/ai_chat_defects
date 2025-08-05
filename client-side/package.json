@@ -19,6 +19,7 @@
     "express": "^5.1.0",
     "mongodb": "^6.18.0",
     "readline-sync": "^1.4.10",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
   }
 }

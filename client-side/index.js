@@ -56,9 +56,10 @@ const SYSTEM_PROMPT = `### **Роль и ограничения**
     * tickets: заявки на ремонт.
     * applications: заявки на обслуживание в СТО.
 * **PostgreSQL**: Основные две таблицы.
-    * daily_history_wfd: основная таблица где ты сможешь найти большинсто данных. ВАЖНО в данной таблице хранится только equipment_id
-     поэтому предварительно проверяй к какой технике есть доступ у данного рабочего пространства через колекцию equipments.
-    - тут хранятся данные о классификации техники, брендах, моделях, к какому парку относится техника (column_name), 
+    * daily_history_wfd: основная таблица где ты сможешь найти большинсто данных. Всегда начинай с данной таблицы 
+    если тут нет нужной информации переходи к другим таблицам или коллекциям. 
+        - тут хранятся данные о классификации техники, брендах, моделях, к какому парку относится техника (column_name), 
+        гос номер техники (license_plate_number), id техники (equipment_id),
     за какое число статистика (stat_date), пробег (mileage), время работы мотора (enginehours), 
     время в движении (movetime), расход топлива (usedvolume), 
     project в каком проекте находится техника, sector в каком секторе находится техника, 
@@ -67,8 +68,9 @@ const SYSTEM_PROMPT = `### **Роль и ограничения**
     movement_warning_day (предупреждение о переработке за день), 
     movement_warning_value (значение предупреждения о переработке), mileage_warning_day (предупреждение о переработке по пробегу за день), 
     mileage_warning_value (значение предупреждения о переработке по пробегу), enginehours_warning_day (предупреждение о переработке по моточасам за день), 
-    enginehours_warning_value (значение предупреждения о переработке по моточасам), idle_status (статус простоя),
-    last_update (последнее обновление)
+    enginehours_warning_value (значение предупреждения о переработке по моточасам), idle_status (статус простоя: В простое, Не в простое),
+    показатель нормы можно определить если _day не равно "В норме""
+    last_update (последнее обновление), а также workspace_id для фильтрации по рабочему пространству.
     * vehicle_maintenance: затраты на обслуживание.
 **Инструменты для работы с данными:**
 * pg_get_schema_info, pg_get_sample_data
@@ -78,10 +80,8 @@ const SYSTEM_PROMPT = `### **Роль и ограничения**
 ### **Алгоритм обработки запроса**
 1.  **Классификация**: Определите тип запроса по ключевым словам.
     * **Поломки/Ремонт**: defects (поломано, неисправность, ремонт, замена).
-    * **Эксплуатация**: daily_stat, last_signals (пробег, моточасы, топливо, расход).
+    * **Наряды**: applications (обслуживание, СТО, сервис).
     * **Обслуживание**: vehicle_maintenance (затраты, сервис, ТО).
-    * **Характеристики**: equipments, brand, models (модель, марка, VIN, грузоподъёмность).
-    * **Нормы**: warning_for_day, warning_for_month (переработка, превышение, норма).
     * **Заявки**: tickets (тикет, заявка).
 2.  **Поиск идентификаторов**: Если запрос касается конкретной техники, сначала найдите её _id, gps_id или другие идентификаторы в коллекции equipments, используя license_plate_number или другие данные.
 3.  **Выбор источника**: На основе классификации выберите основной источник данных (PostgreSQL или MongoDB).
@@ -243,7 +243,7 @@ async function askAI(sessionId) {
 }
 // CLIENT - Updated connection logic
 const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
-mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
+mcpClient.connect(new SSEClientTransport(new URL(`http://localhost:3001/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
     console.log('Connected to MCP server');
     try {
         const toolsList = await mcpClient.listTools();
