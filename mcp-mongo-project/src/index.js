@@ -418,6 +418,7 @@ server.tool(
             let result;
             switch (operation) {
                 case 'select': {
+                    // Запрос SELECT всегда выполняется напрямую
                     const rows = await postgresService.executeQuery(finalQuery, parameters);
                     result = {
                         operation: 'select',
@@ -428,28 +429,55 @@ server.tool(
                 }
 
                 case 'count': {
-                    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as subquery`;
-                    const countResult = await postgresService.executeQuery(countQuery, parameters);
-                    result = {
-                        operation: 'count',
-                        rowCount: 1,
-                        result: countResult[0]?.total || 0
-                    };
+                    // Проверяем, содержит ли запрос уже функцию COUNT
+                    if (trimmedQuery.includes('count(') || trimmedQuery.includes('count (')) {
+                        // Если запрос уже содержит COUNT, выполняем его напрямую
+                        const countResult = await postgresService.executeQuery(finalQuery, parameters);
+                        result = {
+                            operation: 'count',
+                            rowCount: 1,
+                            result: countResult[0]?.count || countResult[0]?.total ||
+                                (countResult[0] && Object.values(countResult[0])[0]) || 0
+                        };
+                    } else {
+                        // Для запросов без COUNT, оборачиваем их как раньше
+                        const countQuery = `SELECT COUNT(*) as total FROM (${query}) as subquery`;
+                        const countResult = await postgresService.executeQuery(countQuery, parameters);
+                        result = {
+                            operation: 'count',
+                            rowCount: 1,
+                            result: countResult[0]?.total || 0
+                        };
+                    }
                     break;
                 }
 
                 case 'exists': {
-                    const existsQuery = `SELECT EXISTS (${query}) as exists`;
-                    const existsResult = await postgresService.executeQuery(existsQuery, parameters);
-                    result = {
-                        operation: 'exists',
-                        rowCount: 1,
-                        result: existsResult[0]?.exists || false
-                    };
+                    // Проверяем, содержит ли запрос уже EXISTS
+                    if (trimmedQuery.includes('exists(') || trimmedQuery.includes('exists (') ||
+                        trimmedQuery.includes('not exists(') || trimmedQuery.includes('not exists (')) {
+                        // Если запрос уже проверяет существование, выполняем его напрямую
+                        const existsResult = await postgresService.executeQuery(finalQuery, parameters);
+                        result = {
+                            operation: 'exists',
+                            rowCount: 1,
+                            result: existsResult[0] ?
+                                (existsResult[0].exists !== undefined ? existsResult[0].exists :
+                                    Object.values(existsResult[0])[0]) : false
+                        };
+                    } else {
+                        // Иначе оборачиваем запрос в EXISTS
+                        const existsQuery = `SELECT EXISTS (${query}) as exists`;
+                        const existsResult = await postgresService.executeQuery(existsQuery, parameters);
+                        result = {
+                            operation: 'exists',
+                            rowCount: 1,
+                            result: existsResult[0]?.exists || false
+                        };
+                    }
                     break;
                 }
             }
-
             let responseText = '';
             switch (operation) {
                 case 'select':
