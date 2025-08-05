@@ -241,9 +241,9 @@ async function askAI(sessionId) {
         };
     }
 }
-// CLIENT - Updated connection logic
+
 const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
-mcpClient.connect(new SSEClientTransport(new URL(`http://localhost:3001/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
+mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
     console.log('Connected to MCP server');
     try {
         const toolsList = await mcpClient.listTools();
