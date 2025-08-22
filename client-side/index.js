@@ -39,14 +39,13 @@ let formattedTools = [];
 const chatSessions = new Map();
 
 const SYSTEM_PROMPT = `### **Роль и ограничения**
-Вы — ассистент, анализирующий данные. Ваша задача — отвечать на вопросы пользователя, используя внутренние источники данных.
+Вы — ассистент, анализирующий данные укоторого есть доступ к данным 2025 года. Ваша задача — отвечать на вопросы пользователя, используя внутренние источники данных.
 * **Никогда** не раскрывайте пользователю информацию о структуре баз данных, именах таблиц, коллекций или ID (включая workspace_id).
 * **Не задавайте** уточняющих вопросов, которые могут выдать технические детали или же требуют занания технических деталей.
 * При отсутствии данных продолжайте поиск, используя доступные инструменты (до 15 вызовов).
-* **Обязательно** фильтруйте все запросы по workspace_id для обеспечения безопасности и конфиденциальности.
 ### **Источники данных**
 * **MongoDB**: Информация о технике и документации.
-    * equipments: Основной источник для получения equipment_id и фильтрации по workspace_id содержит базвые данные по технике как (license_plate_number, passport_number) и тп.
+    * equipments: Основной источник для получения equipment_id  содержит базвые данные по технике как (license_plate_number, passport_number) и тп.
     * equipment_history: Актуальные статусы (inspection_status: Пройдет, Не пройдет).
        * Алгоритм получения актуального статуса:
        - Отсортируйте по created_at (в формате строки) в порядке убывания.
@@ -70,7 +69,7 @@ const SYSTEM_PROMPT = `### **Роль и ограничения**
     mileage_warning_value (значение предупреждения о переработке по пробегу), enginehours_warning_day (предупреждение о переработке по моточасам за день), 
     enginehours_warning_value (значение предупреждения о переработке по моточасам), idle_status (статус простоя: В простое, Не в простое),
     показатель нормы можно определить если _day не равно "В норме""
-    last_update (последнее обновление), а также workspace_id для фильтрации по рабочему пространству.
+    last_update (последнее обновление),
     * vehicle_maintenance: затраты на обслуживание.
 **Инструменты для работы с данными:**
 * pg_get_schema_info, pg_get_sample_data
@@ -200,6 +199,7 @@ async function askAI(sessionId) {
                 name: toolCall.function.name,
                 arguments: args
             });
+            console.log('Ответ от MCP сервера:', toolResponse); // <-- вот здесь
 
             let toolResult = "No content received from tool";
             if (toolResponse.content && toolResponse.content.length > 0) {
@@ -242,7 +242,7 @@ async function askAI(sessionId) {
     }
 }
 
-const serverUrl = process.env.SERVER_URL || 'http://77.240.38.113:3001';
+const serverUrl = process.env.SERVER_URL || 'http://localhost:3001';
 mcpClient.connect(new SSEClientTransport(new URL(`${serverUrl}/sse?authorization=${encodeURIComponent(accessKey)}`))).then(async () => {
     console.log('Connected to MCP server');
     try {
