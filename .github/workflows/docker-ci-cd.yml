@@ -1,0 +1,47 @@
+name: Defects-AI Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps: 
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+      
+      - name: Build server image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mcp_mongo_postgres
+          file: ./mcp_mongo_postgres/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
+      
+      - name: Build client image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
+
+      - name: Deploy to Ubuntu server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.TEST_SERVER_IP }}
+          username: ${{ secrets.TEST_SERVER_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          password: $${{ secrets.TEST_SERVER_PASSWORD }}
+          script: |
+            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
+            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
+            docker compose -f /home/qwertyuiop/app/docker-compose.yml up -d --force-recreate

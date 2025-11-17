@@ -1,4 +1,5 @@
 from decimal import Decimal
+import sys
 import os
 import re
 import uuid
@@ -7,6 +8,8 @@ from dotenv import load_dotenv
 from bson import ObjectId
 import asyncpg
 from asyncpg.pool import Pool
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # Import from relative paths - adjust these based on your actual module structure
 from utils.connection import DatabaseConnection
@@ -259,7 +262,96 @@ class PostgresMcpService:
             return self.clean_result_for_json(relationships)
         except Exception as error:
             raise McpError(ErrorCode.InternalError, f"Relationship analysis failed: {str(error)}")
-
+        
+    async def get_vehicle_data(self, license_plate: str, workspace_id: str = None) -> dict:
+        """Получить данные техники - ИСПРАВЛЕНО"""
+        
+        # Очистка номера
+        license_plate = license_plate.strip().upper()
+        
+        # SQL с встроенным workspace_id
+        if workspace_id:
+            workspace_uuid = self.convert_to_uuid(workspace_id)
+            query = """
+                SELECT
+                    license_plate_number,
+                    MAX(mileage) as current_mileage,
+                    MAX(enginehours) as current_enginehours,
+                    MAX(motohours) as current_motohours,
+                    managers,
+                    project,
+                    brand,
+                    model
+                FROM common_data.daily_history_wfd
+                WHERE license_plate_number = $1 AND workspace_id = $2
+                GROUP BY license_plate_number, managers, project, brand, model
+                ORDER BY MAX(stat_date) DESC
+                LIMIT 1
+            """
+            parameters = [license_plate, workspace_uuid]
+        else:
+            query = """
+                SELECT
+                    license_plate_number,
+                    MAX(mileage) as current_mileage,
+                    MAX(enginehours) as current_enginehours,
+                    MAX(motohours) as current_motohours,
+                    managers,
+                    project,
+                    brand,
+                    model
+                FROM common_data.daily_history_wfd
+                WHERE license_plate_number = $1
+                GROUP BY license_plate_number, managers, project, brand, model
+                ORDER BY MAX(stat_date) DESC
+                LIMIT 1
+            """
+            parameters = [license_plate]
+        
+        try:
+            # КРИТИЧНО: Используем self.db.query напрямую!
+            # НЕ используем self.execute_query - это избегает двойной обработки
+            result = await self.db.query(query, parameters)
+            
+            if result and len(result) > 0:
+                vehicle_data = result[0]
+                return self.clean_result_for_json({
+                    "license_plate": vehicle_data.get('license_plate_number'),
+                    "mileage": vehicle_data.get('current_mileage'),
+                    "engine_hours": vehicle_data.get('current_enginehours'),
+                    "moto_hours": vehicle_data.get('current_motohours'),
+                    "managers": vehicle_data.get('managers'),
+                    "project": vehicle_data.get('project'),
+                    "brand": vehicle_data.get('brand'),
+                    "model": vehicle_data.get('model'),
+                    "found": True
+                })
+            else:
+                return {
+                    "license_plate": license_plate,
+                    "mileage": None,
+                    "engine_hours": None,
+                    "moto_hours": None,
+                    "managers": None,
+                    "project": None,
+                    "brand": None,
+                    "model": None,
+                    "found": False,
+                    "error": f"Данные для техники {license_plate} не найдены"
+                }
+        except Exception as e:
+            import traceback
+            print(f"❌ ERROR in get_vehicle_data:")
+            print(f"   License plate: {license_plate}")
+            print(f"   Workspace: {workspace_id}")
+            print(f"   Error: {str(e)}")
+            print(traceback.format_exc())
+            
+            raise McpError(
+                ErrorCode.InternalError, 
+                f"Failed to get vehicle data for {license_plate}: {str(e)}"
+            )
+    
     def process_uuids(self, query: str):
         if not query or not isinstance(query, str):
             return query

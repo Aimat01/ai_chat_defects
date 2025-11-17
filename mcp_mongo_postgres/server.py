@@ -22,7 +22,8 @@ import threading
 import time
 from werkzeug.serving import WSGIRequestHandler
 
-# Import the real services
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from services.mongo_service import MongoDBService
 from services.postgres_service import PostgresMcpService
 
@@ -78,6 +79,98 @@ def extract_workspace_id_from_args(arguments):
                     break
     
     return workspace_id
+
+
+def get_automotive_knowledge(query):
+    """
+    Встроенная база знаний для типичных автомобильных дефектов
+    Используется как fallback когда web_search недоступен
+    """
+    query_lower = query.lower()
+    
+    # База знаний по типичным проблемам
+    knowledge_base = {
+        'не заводится': {
+            'causes': [
+                'Разряжен аккумулятор - наиболее частая причина',
+                'Неисправен стартер или его реле',
+                'Проблемы с системой зажигания (свечи, катушки)',
+                'Закончилось топливо или неисправен топливный насос',
+                'Неисправность иммобилайзера или ключа'
+            ],
+            'info': 'Проблема с запуском двигателя может быть вызвана электрическими или топливными системами'
+        },
+        'не включается': {
+            'causes': [
+                'Разряжен аккумулятор',
+                'Неисправен замок зажигания',
+                'Проблемы с электропроводкой',
+                'Неисправность блока управления',
+                'Перегорел предохранитель'
+            ],
+            'info': 'Отсутствие питания обычно связано с электрической системой'
+        },
+        'дым': {
+            'causes': [
+                'Черный дым - переобогащенная смесь',
+                'Синий дым - попадание масла в цилиндры',
+                'Белый дым - попадание охлаждающей жидкости',
+                'Изношены поршневые кольца',
+                'Прогорела прокладка ГБЦ'
+            ],
+            'info': 'Цвет дыма указывает на конкретную проблему с двигателем'
+        },
+        'стук': {
+            'causes': [
+                'Износ подшипников коленвала',
+                'Детонация двигателя',
+                'Износ клапанов или гидрокомпенсаторов',
+                'Проблемы с поршневой группой',
+                'Низкий уровень масла'
+            ],
+            'info': 'Стук в двигателе требует немедленной диагностики'
+        },
+        'перегрев': {
+            'causes': [
+                'Недостаток охлаждающей жидкости',
+                'Неисправен термостат',
+                'Не работает вентилятор охлаждения',
+                'Забит радиатор',
+                'Неисправен водяной насос'
+            ],
+            'info': 'Перегрев может привести к серьезным повреждениям двигателя'
+        },
+        'вибрация': {
+            'causes': [
+                'Разбалансированы колеса',
+                'Износ подушек двигателя',
+                'Неисправность карданного вала',
+                'Проблемы с трансмиссией',
+                'Износ шин'
+            ],
+            'info': 'Вибрация может исходить от различных узлов автомобиля'
+        }
+    }
+    
+    # Поиск подходящей информации
+    for key, data in knowledge_base.items():
+        if key in query_lower:
+            result = f"Возможные причины ({key}):\n\n"
+            for i, cause in enumerate(data['causes'], 1):
+                result += f"{i}. {cause}\n"
+            result += f"\nПримечание: {data['info']}"
+            return result
+    
+    # Общая информация если не нашли конкретную проблему
+    return """Общие рекомендации по диагностике:
+
+1. Проверьте уровень всех жидкостей (масло, охлаждающая жидкость, тормозная)
+2. Проверьте состояние аккумулятора и электрических соединений
+3. Осмотрите на наличие видимых повреждений или утечек
+4. Проверьте коды ошибок через диагностический сканер
+5. Обратитесь к специалисту для точной диагностики
+
+Для получения более точной информации уточните симптомы проблемы."""
 
 # Pydantic models for validation (same as before, unchanged)
 class FindDocumentsOptions(BaseModel):
@@ -243,6 +336,34 @@ def list_tools():
                 "name": "pg_analyze_relationships",
                 "description": "Проанализировать взаимосвязи между таблицами PostgreSQL на основе внешних ключей",
                 "inputSchema": PostgresRelationshipsArgs.model_json_schema()
+            },
+            {
+                "name": "web_search",
+                "description": "Поиск актуальной информации в интернете для анализа дефектов техники",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Поисковый запрос для поиска информации о дефектах, причинах поломок, запчастях и ремонтных работах"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            },
+            {
+                "name": "get_vehicle_data",
+                "description": "Получить актуальные данные техники для автозаполнения формы дефекта по гос номеру",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "license_plate": {
+                            "type": "string", 
+                            "description": "Гос номер техники (например: 048YLE04, 023WS02)"
+                        }
+                    },
+                    "required": ["license_plate"]
+                }
             }
         ]
     })
@@ -424,7 +545,64 @@ def call_tool():
                             if result else f"Связи между коллекциями '{args.collection1}' и '{args.collection2}' не найдены.")
                 }]
             })
+        
+        elif tool_name == "web_search":
+            query = arguments.get('query', '')
             
+            print(f"Query: {query}")
+
+            try:
+                import requests
+                from urllib.parse import quote
+                
+                search_result = None
+                
+                try:
+                    from bs4 import BeautifulSoup
+                    
+                    search_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
+                    
+                    response = requests.get(search_url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        results = []
+                        search_results = soup.find_all('div', class_='result__body')
+                        
+                        for idx, result in enumerate(search_results[:5], 1):
+                            title_elem = result.find('a', class_='result__a')
+                            snippet_elem = result.find('a', class_='result__snippet')
+                            
+                            if title_elem and snippet_elem:
+                                title = title_elem.get_text(strip=True)
+                                snippet = snippet_elem.get_text(strip=True)
+                                results.append(f"{idx}. {title}\n   {snippet}")
+                        
+                        if results:
+                            search_result = f"Результаты поиска:\n\n" + "\n\n".join(results)
+                except Exception as e:
+                    print(f"HTML scraping failed: {e}")
+                
+                # Метод 2: Если первый метод не сработал, используем базу знаний
+                if not search_result:
+                    print(f"Using knowledge base for query: {query}")
+                    search_result = get_automotive_knowledge(query)
+                    
+            except Exception as e:
+                # Финальный fallback - всегда используем базу знаний
+                print(f"All search methods failed: {e}")
+                search_result = get_automotive_knowledge(query)
+            
+            return jsonify({
+                "content": [{
+                    "type": "text",
+                    "text": search_result
+                }]
+            })
+    
         # PostgreSQL Tools
         elif tool_name == "pg_execute_query":
             args = PostgresQueryArgs(**arguments)
@@ -495,6 +673,48 @@ def call_tool():
                         "text": f"Tool execution failed: {str(e)}"
                     }]
                 }), 500
+            
+        elif tool_name == "get_vehicle_data":
+            license_plate = arguments.get('license_plate', '')
+            
+            if not license_plate:
+                return jsonify({
+                    "content": [{
+                        "type": "text",
+                        "text": "Ошибка: не указан гос номер техники"
+                    }]
+                }), 400
+            
+            try:
+                # Вызываем новый метод из PostgreSQL сервиса
+                vehicle_data = run_async(postgres_service.get_vehicle_data(license_plate, workspace_id))
+                
+                # Проверяем результат
+                if vehicle_data.get('found'):
+                    status_text = f"✅ Найдены данные для техники {license_plate}"
+                else:
+                    status_text = f"⚠️ Данные для техники {license_plate} не найдены"
+                    
+                return jsonify({
+                    "content": [{
+                        "type": "text",
+                        "text": f"{status_text}:\n{json.dumps(vehicle_data, indent=2, ensure_ascii=False)}"
+                    }]
+                })
+                
+            except Exception as e:
+                # Обрабатываем McpError и другие исключения
+                error_message = str(e)
+                if hasattr(e, 'code'):
+                    error_message = f"[{e.code.name}] {error_message}"
+                    
+                return jsonify({
+                    "content": [{
+                        "type": "text",
+                        "text": f"❌ Ошибка получения данных техники {license_plate}: {error_message}"
+                    }]
+                }), 500
+
 
         elif tool_name == "pg_get_schema_info":
             args = PostgresSchemaArgs(**arguments)
@@ -503,8 +723,8 @@ def call_tool():
                 
             result = run_async(postgres_service.get_schema_info(args.tableName))
             message = (f"Информация о схеме таблицы {args.tableName}" if args.tableName 
-                      else 'Список таблиц в базе данных')
-                      
+                    else 'Список таблиц в базе данных')
+                    
             return jsonify({
                 "content": [
                     {
@@ -595,8 +815,8 @@ if __name__ == '__main__':
         run_async(init_connections())
         
         # Start the Flask server
-        print('MCP MongoDB/PostgreSQL server running on port 3001')
-        app.run(host='0.0.0.0', port=3001, debug=True)
+        print('MCP MongoDB/PostgreSQL server running on port 3003')
+        app.run(host='0.0.0.0', port=3003, debug=True)
         
     except KeyboardInterrupt:
         print("\n👋 Shutting down gracefully...")

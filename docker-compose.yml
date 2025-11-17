@@ -1,12 +1,18 @@
-version: '3.8'
+version: "3.8"
 
 services:
   client:
-    build: ./client-side
+    build: ./client
+    container_name: client_service
     ports:
-      - "3000:3000"
+      - "3002:3002"
+    env_file:
+      - ./client/.env
+    volumes:
+      - ./client:/app
     environment:
-      - SERVER_URL=http://server:3001
+      - PYTHONPATH=/app:/app/mcp_mongo_postgres
+      - SERVER_URL=http://server:3003
       - MONGODB_URI=${MONGODB_URI}
       - MONGODB_NAME=${MONGODB_NAME}
       - ACCESS_KEY=${ACCESS_KEY}
@@ -14,13 +20,18 @@ services:
       - GEMINI_API_KEY1=${GEMINI_API_KEY1}
       - GEMINI_API_KEY2=${GEMINI_API_KEY2}
     depends_on:
-      - server
+      - mcp_mongo_postgres
     restart: unless-stopped
 
-  server:
-    build: ./mcp-mongo-project
+  mcp_mongo_postgres:
+    build: ./mcp_mongo_postgres
+    container_name: mcp_service
     ports:
-      - "3001:3001"
+      - "3003:3003"
+    env_file:
+      - ./mcp_mongo_postgres/.env
+    volumes:
+      - ./mcp_mongo_postgres:/app
     environment:
       - ACCESS_KEY=${ACCESS_KEY}
       - MONGO_URI=${MONGO_URI}

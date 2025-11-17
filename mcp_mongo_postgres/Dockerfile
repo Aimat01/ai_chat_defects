@@ -12,6 +12,6 @@ COPY .env .env
 
 ENV PYTHONPATH=/app
 
-EXPOSE 3002
+EXPOSE 3003
 
-CMD ["python", "main.py"]
+CMD ["python", "server.py"]
