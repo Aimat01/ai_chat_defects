@@ -33,7 +33,7 @@ app.add_middleware(
 
 PORT = int(os.getenv("PORT", 3002))
 access_key = os.getenv("ACCESS_KEY")
-server_url = os.getenv("SERVER_URL", "http://host.docker.internal:3003")
+server_url = os.getenv("SERVER_URL", "http://195.49.212.78:3003")
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 
@@ -312,7 +312,7 @@ async def ask_ai(session_id: str) -> Dict[str, Any]:
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {openrouter_api_key}",
-                    "HTTP-Referer": "http://localhost:3002", 
+                    "HTTP-Referer": "http://195.49.212.78:3002", 
                     "X-Title": "MongoDB-Qwen-Chatbot"
                 },
                 json=request_body
