@@ -42,9 +42,9 @@ jobs:
           username: ${{ secrets.TEST_SERVER_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            mkdir -p /home/qwertyuiop/app
-            echo "${{ secrets.ENV_SERVER_FILE }}" > /home/qwertyuiop/app/.env_server
-            echo "${{ secrets.ENV_APP_FILE }}" > /home/qwertyuiop/app/.env_main
+            sudo mkdir -p /app
+            echo "${{ secrets.ENV_SERVER_FILE }}" > sudo tee /app/.env_server
+            echo "${{ secrets.ENV_APP_FILE }}" > sudo tee /app/.env_main
+
             docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
             docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
-            docker compose -f /home/qwertyuiop/app/docker-compose.yml up -d --force-recreate
