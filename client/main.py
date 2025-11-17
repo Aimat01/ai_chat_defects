@@ -452,13 +452,13 @@ async def connect(sid, environ, auth):
 
         print(f"Auth данные: {auth}")
 
-        # access_token = headers.get('authorization')
+        access_token = headers.get('authorization')
         workspace = headers.get('workspace')
 
         print(f"🔑 Authorization: {access_token}")
         print(f"🏢 Workspace: {workspace}")
 
-        # await authorize(access_token, workspace)
+        await authorize(access_token, workspace)
 
         workspace_map[sid] = workspace
 

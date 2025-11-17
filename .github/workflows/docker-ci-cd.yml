@@ -43,8 +43,15 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             sudo mkdir -p /app
-            echo "${{ secrets.ENV_SERVER_FILE }}" > sudo tee /app/.env_server
-            echo "${{ secrets.ENV_APP_FILE }}" > sudo tee /app/.env_main
+            echo "${{ secrets.ENV_SERVER_FILE }}" | sudo tee /app/.env_server
+            echo "${{ secrets.ENV_APP_FILE }}" | sudo tee /app/.env_main
 
-            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
-            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
+            sudo docker stop mcpi || true
+            sudo docker rm mcpi || true
+            sudo docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
+            sudo docker run -d --name mcpi -p 3003:3003 --env-file /app/.env_server ${{ secrets.DOCKER_HUB_USERNAME }}/mcpi:latest
+
+            sudo docker stop defai || true
+            sudo docker rm defai || true
+            sudo docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
+            sudo docker run -d --name defai -p 3002:3002 --env-file /app/.env_main ${{ secrets.DOCKER_HUB_USERNAME }}/defai:latest
