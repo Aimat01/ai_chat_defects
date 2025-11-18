@@ -118,10 +118,10 @@ DEFECT_AI_SYSTEM_PROMPT = """### **DefectAI - Анализ дефектов те
         {"name": "Клеммы аккумуляторные", "quantity": 2, "article": "T-2515"}
     ],
     "works": [
-        "Диагностика электросистемы - 0.5ч",
-        "Демонтаж старого аккумулятора - 0.3ч",
-        "Установка нового аккумулятора - 0.3ч",
-        "Проверка системы зарядки - 0.4ч"
+        {"title": "Диагностика электросистемы", "time": 0.5},
+        {"title": "Демонтаж старого аккумулятора", "time": 0.3},
+        {"title": "Установка нового аккумулятора", "time": 0.3},
+        {"title": "Проверка системы зарядки", "time": 0.4}
     ],
     "auto_data": {
         "mileage": 125000,
@@ -312,7 +312,7 @@ async def ask_ai(session_id: str) -> Dict[str, Any]:
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {openrouter_api_key}",
-                    "HTTP-Referer": "http://195.49.212.78:3002", 
+                    "HTTP-Referer": "http://localhost:3002", 
                     "X-Title": "MongoDB-Qwen-Chatbot"
                 },
                 json=request_body
@@ -444,21 +444,42 @@ async def get_history_summary(sid):
 async def connect(sid, environ, auth):
     """Handle socket connection with authentication"""
     try:
+        # print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         headers = {}
         for key, value in environ.items():
             if key.startswith('HTTP_'):
                 header_name = key[5:].lower().replace('_', '-')
                 headers[header_name] = value
-
-        print(f"Auth данные: {auth}")
-
+        
+        print(f"📦 Headers: {headers.keys()}")
+        
         access_token = headers.get('authorization')
         workspace = headers.get('workspace')
+        
+        if not access_token and isinstance(auth, dict):
+            access_token = auth.get('token') or auth.get('authorization')
+        
+        if not workspace and isinstance(auth, dict):
+            workspace = auth.get('workspace')
+        
+        print(f"✅ Extracted data:")
+        print(f"   Token: {access_token[:20] if access_token else 'None'}...")
+        print(f"   Workspace: {workspace}")
+        
+        if not workspace:
+            print(f"❌ Connection error for {sid}: Workspace ID is required")
+            await sio.emit('error', {'error': 'Workspace ID is required'}, room=sid)
+            await sio.disconnect(sid)
+            return
 
-        print(f"🔑 Authorization: {access_token}")
-        print(f"🏢 Workspace: {workspace}")
-
+        if not access_token:
+            print(f"❌ Connection error for {sid}: Access token is required")
+            await sio.emit('error', {'error': 'Access token is required'}, room=sid)
+            await sio.disconnect(sid)
+            return
+        
         await authorize(access_token, workspace)
+        print(f"✅ Authorization successful")   
 
         workspace_map[sid] = workspace
 
@@ -662,8 +683,10 @@ async def handle_cause_details(sid, message, workspace):
         {{"name": "Название запчасти", "quantity": 1, "article": "Артикул"}}
     ],
     "works": [
-        "Название работы 1 - время в часах",
-        "Название работы 2 - время в часах"
+        {{"title": "Диагностика электросистемы", "time": 0.5}},
+        {{"title": "Демонтаж старого аккумулятора", "time": 0.3}},
+        {{"title": "Установка нового аккумулятора", "time": 0.3}},
+        {{"title": "Проверка системы зарядки", "time": 0.4}}
     ],
     "auto_data": {{
         "mileage": "из get_vehicle_data",
