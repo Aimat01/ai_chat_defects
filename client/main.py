@@ -312,7 +312,7 @@ async def ask_ai(session_id: str) -> Dict[str, Any]:
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {openrouter_api_key}",
-                    "HTTP-Referer": "http://localhost:3002", 
+                    "HTTP-Referer": "195.49.212.78:3002", 
                     "X-Title": "MongoDB-Qwen-Chatbot"
                 },
                 json=request_body
