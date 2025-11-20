@@ -33,7 +33,7 @@ app.add_middleware(
 
 PORT = int(os.getenv("PORT", 3002))
 access_key = os.getenv("ACCESS_KEY")
-server_url = os.getenv("SERVER_URL", "http://195.49.212.78:3003")
+server_url = os.getenv("SERVER_URL", "http://localhost:3003")
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 
@@ -51,30 +51,77 @@ DEFECT_AI_SYSTEM_PROMPT = """### **DefectAI - Анализ дефектов те
 
 Вы - специализированный ассистент для анализа дефектов техники и автозаполнения форм дефектов.
 
-**ВАЖНО**: Всегда возвращайте ответы в чистом JSON формате БЕЗ markdown (без ```json).
+**ВАЖНО**: Всегда возвращайте ответы в чистом JSON формате БЕЗ markdown (без ```json). 
+Если предоставлен VIN-код, ОБЯЗАТЕЛЬНО используйте его для более точного анализа!
+
+**VIN-код содержит:**
+- Производитель и модель (точные данные)
+- Год выпуска
+- Тип двигателя
+- Спецификации трансмиссии
+- Страна производства
 
 **ЭТАП 1 - Анализ дефекта (stage: "analysis"):**
+
+ПОЛУЧЕНИЕ VIN КОДА (ОБЯЗАТЕЛЬНО ПЕРВЫМ ДЕЛОМ):
+1. **ПЕРВЫМ ДЕЛОМ** вызовите findVINCode с данными техники:
+   - brand: марка техники
+   - model: модель техники
+   - category: категория/тип техники
+   - license_plate: гос номер техники
+   
+2. Если VIN код найден через findVINCode:
+   - Попробуйте получить детальную информацию через web_search с VIN:
+     - "{VIN} {название_дефекта} common problems"
+     - "{VIN} {название_дефекта} causes"
+   
+3. Если web_search не дает результатов, используйте decodeVIN для декодирования VIN кода через partsouq.com:
+   - decodeVIN вернет детальную информацию о технике
+   - Используйте эти данные для более точного поиска
+   
+4. Если VIN код не найден или decodeVIN не дал результатов:
+   - Используйте общий поиск без VIN:
+     - "{марка} {модель} {название_дефекта} причины"
+     - "{марка} {модель} {тип} {название_дефекта} common problems"
+
 Пользователь вводит:
-- Техника: марка, модель, тип/класс (легковая, автобус, грузовая), гос номер, VID
-- Название дефекта: краткое описание проблемы (например: "машина не заводиться", "перегрев двигателя")
+- Техника: марка, модель, тип, гос номер
+- Название дефекта
 
 Алгоритм:
-1. **ОБЯЗАТЕЛЬНО** используйте для поиска возможных причин
-2. Поисковые запросы:
-    -"{марка} {модель} {название_дефекта} причины неисправности"
-    -"{марка} {модель} {название_дефекта} типичные поломки"
-3. Проанализируйте результаты поиска
-4. Верните JSON с 3-5 набиолее вероятными причинами
+1. Сначала ищите VIN код через findVINCode
+2. Если VIN найден, используйте web_search с VIN для поиска причин
+3. Если web_search не дает результатов, используйте decodeVIN для детального декодирования
+4. Если VIN не найден или декодирование не удалось, используйте общий поиск
+5. **КРИТИЧНО**: После выполнения всех tool calls ОБЯЗАТЕЛЬНО верните финальный JSON ответ с возможными причинами
+6. Верните 3-5 наиболее вероятных причин в формате JSON
 
-**ЭТАП 2 - Детальный анализ (stage: "details"):**
-Пользователь выбрал одну из причин
+**ЭТАП 2 - Детальный анализ:**
 
 Алгоритм:
 1. **ПЕРВЫМ ДЕЛОМ** вызовите get_vehicle_data с license_plate для получения актуальных данных
-2. Используйте web_search для поиска деталей:
-    -"{причина} {марка} {модель} запчасти артикулы" 
-    -"{причина} ремонт работы регламент"
-    -"{причина} {марка} {модель} инструкция замены"
+
+2. ПОЛУЧЕНИЕ VIN КОДА (если еще не получен):
+   - Если VIN код еще не был получен, вызовите findVINCode
+   - Если VIN найден, попробуйте decodeVIN для детального декодирования
+
+3. Используйте web_search для поиска деталей:
+   - С VIN (приоритет):
+     - "{VIN} {причина} OEM part numbers"
+     - "{VIN} {причина} запчасти артикулы"
+     - "{VIN} {причина} ремонт работы регламент"
+     - "{марка} {модель} {год} TSB {причина}"
+     - "{VIN} maintenance schedule"
+   
+   - Без VIN (fallback):
+     - "{причина} {марка} {модель} запчасти артикулы" 
+     - "{причина} ремонт работы регламент"
+     - "{причина} {марка} {модель} инструкция замены"
+
+4. С VIN ищите:
+   - Точные OEM-номера запчастей для данного VIN
+   - TSB (Technical Service Bulletins) для этой модели
+   - Регламентные работы с учетом года и пробега
 3. Определите категорию поломки из списка:
    - "Гидравлические поломки"
    - "Электрические поломки"  
@@ -107,15 +154,19 @@ DEFECT_AI_SYSTEM_PROMPT = """### **DefectAI - Анализ дефектов те
     ]
 }
 
-**Формат ответа ЭТАП 2:**
+**Формат ответа ЭТАП 2 (с VIN):**
 {
     "stage": "details",
-    "selected_cause": "Разряжен аккумулятор",
-    "category": "Электрические поломки",
-    "description": "Аккумуляторная батарея не способна обеспечить достаточный пусковой ток для запуска двигателя. Это может быть вызвано естественным износом, глубоким разрядом, неисправностью генератора или утечкой тока в системе.",
+    "selected_cause": "...",
+    "category": "...",
+    "description": "...",
     "spare_parts": [
-        {"name": "Аккумулятор 12V 100Ah", "quantity": 1, "article": "FB9-A"},
-        {"name": "Клеммы аккумуляторные", "quantity": 2, "article": "T-2515"}
+        {
+            "name": "...",
+            "quantity": 1,
+            "article": "OEM номер с учетом VIN",
+            "vin_specific": true  ← добавить если найдено по VIN
+        }
     ],
     "works": [
         {"title": "Диагностика электросистемы", "time": 0.5},
@@ -123,6 +174,12 @@ DEFECT_AI_SYSTEM_PROMPT = """### **DefectAI - Анализ дефектов те
         {"title": "Установка нового аккумулятора", "time": 0.3},
         {"title": "Проверка системы зарядки", "time": 0.4}
     ],
+    "vin_analysis": {
+        "used": true,
+        "confidence": "high",  // high если найдена инфо по VIN
+        "tsb_found": false,
+        "oem_parts_verified": true
+    },
     "auto_data": {
         "mileage": 125000,
         "engine_hours": 3200,
@@ -296,7 +353,7 @@ async def ask_ai(session_id: str) -> Dict[str, Any]:
             print(f"📝 Last user message: {clean_messages[-1].get('content', '')}")
 
         request_body = {
-            "model": "google/gemini-2.5-flash",
+            "model": "x-ai/grok-4-fast",
             "messages": clean_messages,
             "temperature": 0.1,
             "max_tokens": 2048
@@ -312,7 +369,8 @@ async def ask_ai(session_id: str) -> Dict[str, Any]:
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {openrouter_api_key}",
-                    "HTTP-Referer": "195.49.212.78:3002", 
+                    # "HTTP-Referer": "195.49.212.78:3002",
+                    "HTTP-Referer": "localhost:3002", 
                     "X-Title": "MongoDB-Qwen-Chatbot"
                 },
                 json=request_body
@@ -444,7 +502,6 @@ async def get_history_summary(sid):
 async def connect(sid, environ, auth):
     """Handle socket connection with authentication"""
     try:
-        # print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         headers = {}
         for key, value in environ.items():
             if key.startswith('HTTP_'):
@@ -590,9 +647,15 @@ async def handle_defect_analysis(sid, message, workspace):
 Гос номер: {license_plate}
 Название дефекта: {defect_description}
 
+ОБЯЗАТЕЛЬНЫЙ ПОРЯДОК ДЕЙСТВИЙ:
+1. Сначала вызови findVINCode с brand="{brand}", model="{model}", category="{vehicle_type}", license_plate="{license_plate}"
+2. Если VIN найден, используй web_search с запросом: "{{VIN}} {defect_description} причины неисправности"
+3. Если VIN не найден, используй web_search с запросом: "{brand} {model} {defect_description} причины неисправности"
+4. **КРИТИЧНО**: После выполнения tool calls ОБЯЗАТЕЛЬНО верни финальный JSON ответ. НЕ вызывай больше инструментов, а верни результат!
+
 ВАЖНО: 
-1. Используй web_search с запросом: "{brand} {model} {defect_description} причины неисправности"
-2. Верни результат СТРОГО в JSON формате:
+- После получения результатов от инструментов немедленно верни JSON ответ
+- Верни результат СТРОГО в JSON формате:
 {{
     "stage": "analysis",
     "vehicle": {{
@@ -609,7 +672,7 @@ async def handle_defect_analysis(sid, message, workspace):
     ]
 }}
 
-Найди 3-5 наиболее вероятных причин данного дефекта через web_search."""
+Найди 3-5 наиболее вероятных причин данного дефекта и верни результат в JSON."""
     
     messages = chat_sessions.get(sid, [])
     messages.append({"role": "user", "content": analysis_prompt})
@@ -631,7 +694,12 @@ async def handle_defect_analysis(sid, message, workspace):
 async def handle_cause_details(sid, message, workspace):
     """Этап 2: Детальная информация по выбраннной причине"""
     vehicle_info = message.get('vehicle', {})
-    selected_cause = message.get('selected_cause', [])
+    # Поддерживаем оба варианта: selected_cause и selected_causes
+    selected_cause = message.get('selected_cause', message.get('selected_causes', []))
+    
+    # Убеждаемся, что это список
+    if not isinstance(selected_cause, list):
+        selected_cause = [selected_cause] if selected_cause else []
     
     brand = vehicle_info.get('brand', '')
     model = vehicle_info.get('model', '')
@@ -656,10 +724,21 @@ async def handle_cause_details(sid, message, workspace):
 Выбранные причини: {causes_text}
 
 ОБЯЗАТЕЛЬНЫЕ шаги:
-1. Используй web_search для поиска подробной информации о каждой причине
-2. Поиск запчастей: объедини все необходимые запчасти для всех причин
-3. Поиск работ: объедини все необходимые работы для всех причин
-4. ОБЯЗАТЕЛЬНО вызови get_vehicle_data с license_plate="{license_plate}"
+1. **ПЕРВЫМ ДЕЛОМ** вызови get_vehicle_data с license_plate="{license_plate}"
+
+2. ПОЛУЧЕНИЕ VIN КОДА (если еще не получен):
+   - Вызови findVINCode с brand="{brand}", model="{model}", category="{vehicle_type}", license_plate="{license_plate}"
+   - Если VIN найден, попробуй decodeVIN для детального декодирования через partsouq.com
+   - Используй полученную информацию о технике для более точного поиска
+
+3. Используй web_search для поиска подробной информации:
+   - С VIN (приоритет): "{{VIN}} {{причина}} OEM part numbers", "{{VIN}} {{причина}} запчасти артикулы"
+   - Без VIN: "{{причина}} {{brand}} {{model}} запчасти артикулы"
+   - "{{причина}} ремонт работы регламент"
+   - "{{причина}} {{brand}} {{model}} инструкция замены"
+
+4. Поиск запчастей: объедини все необходимые запчасти для всех причин
+5. Поиск работ: объедини все необходимые работы для всех причин
 
 КРИТИЧНО - выбери категорию ТОЧНО из этого списка:
    - "Гидравлические поломки"
@@ -676,7 +755,7 @@ async def handle_cause_details(sid, message, workspace):
 Верни результат в JSON формате:
 {{
     "stage": "details",
-    "selected_cause": "{selected_cause}",
+    "selected_cause": {json.dumps(selected_cause) if isinstance(selected_cause, list) else json.dumps([selected_cause])},
     "category": "Точное название из списка выше",
     "description": "Подробное описание причины и её влияния",
     "spare_parts": [
@@ -795,8 +874,10 @@ async def process_ai_request_with_debug(sid):
     """Улучшенная версия process_ai_request с отладочными событиями"""
     final_response = ''
     iteration_count = 0
-    max_iterations = 15
+    max_iterations = 20  # Увеличено для обработки нескольких tool calls
     messages = chat_sessions.get(sid, [])
+    tool_call_count = 0
+    max_tool_calls = 10  # Максимум tool calls перед принудительным возвратом
 
     while iteration_count < max_iterations:
         iteration_count += 1
@@ -820,13 +901,30 @@ async def process_ai_request_with_debug(sid):
         if ai_response["type"] == "tool_call":
             tool_name = ai_response["toolName"]
             tool_args = ai_response["toolArgs"]
+            tool_call_count += 1
 
             await emit_debug_event(sid, 'tool_call', {
                 'name': tool_name,
                 'arguments': tool_args,
                 'status': 'calling',
+                'count': tool_call_count,
                 'timestamp': time.time()
             })
+            
+            # Если было слишком много tool calls, принудительно требуем финальный ответ
+            if tool_call_count >= max_tool_calls:
+                await emit_debug_event(sid, 'reasoning', {
+                    'message': f'Выполнено {tool_call_count} tool calls. Требуется финальный ответ.',
+                    'timestamp': time.time()
+                })
+                
+                # Добавляем напоминание в сообщения
+                messages.append({
+                    "role": "user",
+                    "content": "ВАЖНО: Вы уже выполнили достаточно tool calls. Теперь ОБЯЗАТЕЛЬНО верните финальный JSON ответ без вызова дополнительных инструментов. Проанализируйте полученные результаты и верните ответ в требуемом формате."
+                })
+                chat_sessions[sid] = messages
+                continue
 
             if tool_name == 'web_search':
                 query = tool_args.get('query', '')
@@ -897,6 +995,81 @@ async def process_ai_request_with_debug(sid):
                         'timestamp': time.time()
                     })
             
+            elif tool_name == 'findVINCode':
+                brand = tool_args.get('brand', '')
+                model = tool_args.get('model', '')
+                license_plate = tool_args.get('license_plate', '')
+
+                await emit_debug_event(sid, 'database', {
+                    'operation': 'findVINCode',
+                    'collection': 'equipments',
+                    'query': f"brand={brand}, model={model}, license_plate={license_plate}",
+                    'status': 'executing',
+                    'timestamp': time.time()
+                })
+
+                try:
+                    tool_result = ai_response.get("toolResult", {})
+                    
+                    if isinstance(tool_result, str):
+                        try:
+                            tool_result = json.loads(tool_result)
+                        except:
+                            pass
+                    
+                    vin_found = tool_result.get('success', False) if isinstance(tool_result, dict) else False
+
+                    await emit_debug_event(sid, 'database', {
+                        'operation': 'findVINCode',
+                        'collection': 'equipments',
+                        'vinFound': vin_found,
+                        'fullData': tool_result,
+                        'status': 'completed',
+                        'timestamp': time.time()
+                    })
+                except Exception as e:
+                    await emit_debug_event(sid, 'database', {
+                        'operation': 'findVINCode',
+                        'status': 'error',
+                        'error': str(e),
+                        'timestamp': time.time()
+                    })
+                    
+            elif tool_name == 'decodeVIN':
+                vin = tool_args.get('vin', '')
+
+                await emit_debug_event(sid, 'tool_call', {
+                    'name': 'decodeVIN',
+                    'arguments': {'vin': vin},
+                    'status': 'decoding',
+                    'message': f'Декодирование VIN через partsouq.com...',
+                    'timestamp': time.time()
+                })
+
+                try:
+                    tool_result = ai_response.get("toolResult", {})
+                    
+                    decode_success = False
+                    if isinstance(tool_result, str):
+                        decode_success = '✅' in tool_result or 'success' in tool_result.lower()
+                    elif isinstance(tool_result, dict):
+                        decode_success = tool_result.get('success', False)
+
+                    await emit_debug_event(sid, 'tool_call', {
+                        'name': 'decodeVIN',
+                        'status': 'completed',
+                        'success': decode_success,
+                        'message': 'VIN декодирован' if decode_success else 'Ошибка декодирования VIN',
+                        'timestamp': time.time()
+                    })
+                except Exception as e:
+                    await emit_debug_event(sid, 'tool_call', {
+                        'name': 'decodeVIN',
+                        'status': 'error',
+                        'error': str(e),
+                        'timestamp': time.time()
+                    })
+                    
             elif tool_name in ['findDocuments', 'countDocuments', 'pg_execute_query']:
                 operation = tool_name
                 collection = tool_args.get('collection') or tool_args.get('table', 'unknown')
@@ -1036,6 +1209,7 @@ async def main():
             log_level = "info"
         )
         server = uvicorn.Server(config)
+        # print(f"🚀 HTTP server starting at http://195.49.212.78:{PORT}")
         print(f"🚀 HTTP server starting at http://0.0.0.0:{PORT}")
         await server.serve()
 
